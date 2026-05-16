@@ -53,6 +53,27 @@ const cases: ReadonlyArray<readonly [string, string, string]> = [
     "https://example.com/x?b=2&utm_source=x&a=1",
     "https://example.com/x?b=2&a=1",
   ],
+  [
+    "empty tracking value still stripped",
+    "https://example.com/x?utm_source=&q=hello",
+    "https://example.com/x?q=hello",
+  ],
+  [
+    "duplicate non-tracking keys preserved (both values, original order)",
+    "https://example.com/x?q=1&q=2&utm_source=x",
+    "https://example.com/x?q=1&q=2",
+  ],
+  [
+    "mixed-case tracking param stripped (UTM_SOURCE)",
+    "https://example.com/x?UTM_SOURCE=x&q=hello",
+    "https://example.com/x?q=hello",
+  ],
+  ["userinfo stripped", "https://user:pass@example.com/x", "https://example.com/x"],
+  [
+    "userinfo stripped alongside tracking + trailing slash",
+    "https://user:pass@EXAMPLE.com:443/foo/?utm_source=x",
+    "https://example.com/foo",
+  ],
 
   [
     "mixed kitchen sink",
@@ -91,5 +112,19 @@ describe("canonicalize", () => {
     expect(canonicalize("https://example.com/x?utm_source=x&fbclid=y")).toBe(
       "https://example.com/x",
     );
+  });
+
+  it("does not throw on non-special schemes (pins current behavior)", () => {
+    expect(() => canonicalize("mailto:user@example.com")).not.toThrow();
+    expect(() => canonicalize("data:text/plain,hello")).not.toThrow();
+  });
+
+  it("strips fragment from non-special schemes", () => {
+    expect(canonicalize("mailto:user@example.com?subject=hi#frag")).not.toContain("#frag");
+  });
+
+  it("throws on inputs that are not valid URLs", () => {
+    expect(() => canonicalize("not a url")).toThrow();
+    expect(() => canonicalize("")).toThrow();
   });
 });

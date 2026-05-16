@@ -6,12 +6,10 @@ export function canonicalize(input: string): string {
   const url = new URL(input);
 
   url.hash = "";
+  url.username = "";
+  url.password = "";
 
-  const keys = new Set<string>();
-  for (const key of url.searchParams.keys()) {
-    keys.add(key);
-  }
-  for (const key of keys) {
+  for (const key of new Set(url.searchParams.keys())) {
     if (isTrackingParam(key)) {
       url.searchParams.delete(key);
     }
@@ -21,9 +19,5 @@ export function canonicalize(input: string): string {
     url.pathname = url.pathname.replace(/\/+$/, "");
   }
 
-  let result = url.toString();
-  if (result.endsWith("?")) {
-    result = result.slice(0, -1);
-  }
-  return result;
+  return url.toString();
 }
