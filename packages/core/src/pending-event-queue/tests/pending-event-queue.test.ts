@@ -96,6 +96,28 @@ describe("PendingEventQueue", () => {
     expect(peeked.every((e) => e.status === "pending")).toBe(true);
   });
 
+  it("retries hydration after a transient storage.read failure", async () => {
+    let attempt = 0;
+    const inner = new InMemoryStoragePort();
+    const flaky: StoragePort = {
+      async read() {
+        attempt += 1;
+        if (attempt === 1) {
+          throw new Error("transient");
+        }
+        return inner.read();
+      },
+      async write(entries) {
+        return inner.write(entries);
+      },
+    };
+
+    const queue = new PendingEventQueue(flaky);
+    await expect(queue.size()).rejects.toThrow("transient");
+    // second call should retry hydration and succeed
+    expect(await queue.size()).toBe(0);
+  });
+
   it("enqueue assigns unique UUIDs", async () => {
     const queue = new PendingEventQueue(new InMemoryStoragePort());
     const a = await queue.enqueue(bytes(1));
@@ -124,6 +146,15 @@ describe("PendingEventQueue", () => {
 
     const second = await queue.peek();
     expect(Array.from(second[0]!.event)).toEqual([1, 2, 3]);
+  });
+
+  it("defensive copy on enqueue return: mutating returned entry does not affect storage", async () => {
+    const queue = new PendingEventQueue(new InMemoryStoragePort());
+    const returned = await queue.enqueue(bytes(1, 2, 3));
+    returned.event[0] = 99;
+
+    const peeked = await queue.peek();
+    expect(Array.from(peeked[0]!.event)).toEqual([1, 2, 3]);
   });
 
   it("peek does not return in-flight entries", async () => {
@@ -191,5 +222,33 @@ describe("PendingEventQueue", () => {
     expect(peeked[0]!.id).toBe(entry.id);
     expect(peeked[0]!.status).toBe("failed");
     expect(peeked[0]!.attemptCount).toBe(1);
+  });
+
+  it("serialises concurrent mutations so storage observes writes in order", async () => {
+    // Each `write(entries)` records the length of the snapshot. If mutations
+    // run concurrently their writes can interleave and storage will observe
+    // out-of-order lengths (e.g. [1, 1, 3, 2, 5]). With the write chain, the
+    // observed sequence must be strictly monotonic: [1, 2, 3, 4, 5].
+    const calls: number[] = [];
+    const storage: StoragePort = {
+      async read() {
+        return [];
+      },
+      async write(entries) {
+        await new Promise((r) => setTimeout(r, 1));
+        calls.push(entries.length);
+      },
+    };
+
+    const queue = new PendingEventQueue(storage);
+    await Promise.all([
+      queue.enqueue(bytes(1)),
+      queue.enqueue(bytes(2)),
+      queue.enqueue(bytes(3)),
+      queue.enqueue(bytes(4)),
+      queue.enqueue(bytes(5)),
+    ]);
+
+    expect(calls).toEqual([1, 2, 3, 4, 5]);
   });
 });
