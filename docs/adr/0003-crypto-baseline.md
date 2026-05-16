@@ -2,7 +2,7 @@
 
 One 32-byte symmetric key per vault, used with **XChaCha20-Poly1305** (via libsodium) to encrypt every event. The 24-byte nonce means devices can use random nonces without coordinating a counter, which matters because RN/Tauri/extension surfaces don't share state cleanly.
 
-**Pairing** uses an ephemeral X25519 keypair generated on the *new* device, displayed as a QR. The existing device scans, asks the user to confirm, then seals `(vaultKey, deviceAuthToken)` to the ephemeral public key via `crypto_box_seal` and posts the ciphertext to the relay under a short-lived pairing token (60s TTL). The new device polls, unseals, and now has the vault key — it derives `vaultId` from `vaultKey` locally via HKDF. The QR itself never carries the secret — a shoulder-surfing photo gets only a public key.
+**Pairing** uses an ephemeral X25519 keypair generated on the _new_ device, displayed as a QR. The existing device scans, asks the user to confirm, then seals `(vaultKey, deviceAuthToken)` to the ephemeral public key via `crypto_box_seal` and posts the ciphertext to the relay under a short-lived pairing token (60s TTL). The new device polls, unseals, and now has the vault key — it derives `vaultId` from `vaultKey` locally via HKDF. The QR itself never carries the secret — a shoulder-surfing photo gets only a public key.
 
 **Recovery** is a 24-word BIP-39 mnemonic encoding the 32-byte vault key (standard BIP-39 with checksum). The 16-byte vault ID is derived from the vault key via HKDF with a fixed salt (`"defer-vault-id"`), so a single standard mnemonic carries everything needed to restore. Shown once at vault creation; the user records it. Sufficient to restore on a brand-new device when no other device is available.
 
@@ -11,6 +11,7 @@ One 32-byte symmetric key per vault, used with **XChaCha20-Poly1305** (via libso
 **Event AAD** includes `vaultId || deviceId || sequenceNumber`. A malicious or buggy relay can't silently reorder, drop, or replay events without devices noticing — AEAD verification fails on tampered ordering.
 
 **Libraries:**
+
 - `libsodium-wrappers-sumo` — TS core, Cloudflare Worker, Chrome + Safari extensions
 - `react-native-libsodium` (serenity-kit) — RN/Expo iOS, JSI-based, API-compatible with the JS package
 - `dryoc` — Tauri/Rust desktop (avoid the deprecated `sodiumoxide`)
@@ -18,7 +19,7 @@ One 32-byte symmetric key per vault, used with **XChaCha20-Poly1305** (via libso
 
 ## Considered and rejected
 
-- **Noise Protocol Framework.** Wrong tool — Noise is a session/transport protocol; defer needs at-rest blob encryption that any future device with the vault key must decrypt. Noise even just for pairing is unnecessary: the QR is a one-way OOB channel that already carries authenticity; Noise solves the *opposite* problem (active MITM on a bidirectional channel with no pre-shared secret).
+- **Noise Protocol Framework.** Wrong tool — Noise is a session/transport protocol; defer needs at-rest blob encryption that any future device with the vault key must decrypt. Noise even just for pairing is unnecessary: the QR is a one-way OOB channel that already carries authenticity; Noise solves the _opposite_ problem (active MITM on a bidirectional channel with no pre-shared secret).
 - **Per-device keypairs with envelope encryption (Signal/Matrix shape).** Overkill for single-user read-later. Cryptographic revocation still doesn't help with past events the device already pulled, so the practical revocation outcome is identical to the relay-token approach with vastly more crypto complexity.
 - **age / OpenPGP.** No good RN binding; file-oriented framing adds overhead per blob; X25519 wrapping isn't needed for single-user.
 - **Argon2id KDF over the recovery mnemonic.** A 24-word BIP-39 mnemonic carries 256 bits of entropy by construction; KDF stretching is ceremony, not security. If a passphrase recovery option is added later, the KDF layer goes in then.
