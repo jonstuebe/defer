@@ -16,8 +16,11 @@ export const ItemSavedSchema = z.object({
   ...envelopeFields,
   data: z.object({
     itemId: z.string().min(1),
-    url: z.string().min(1),
-    canonicalUrl: z.string().min(1),
+    // z.url() checks well-formedness at the schema boundary; canonicalization
+    // (e.g. trailing-slash normalisation) is a separate concern and lives elsewhere.
+    url: z.url(),
+    canonicalUrl: z.url(),
+    // Empty string is intentional: items can be saved before a title is extracted.
     title: z.string(),
     savedAt: z.number().int().nonnegative(),
   }),

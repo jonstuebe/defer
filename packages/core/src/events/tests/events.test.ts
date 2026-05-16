@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   EventSchema,
   type Event,
+  type EventType,
   PendingEventSchema,
   type PendingEvent,
   ItemSavedSchema,
@@ -32,7 +33,12 @@ const envelope = {
 
 describe("EventSchema (catalog)", () => {
   it("contains all 14 v1 event types", () => {
-    const types: Event["type"][] = [
+    // Derive the registered set directly from the schema so that adding a new
+    // event type without registering it in the union will fail this test.
+    const registeredTypes: EventType[] = EventSchema.options.map(
+      (o) => o.shape.type.value as EventType,
+    );
+    const expectedTypes: EventType[] = [
       "ItemSaved",
       "ItemArchived",
       "ItemUnarchived",
@@ -48,7 +54,8 @@ describe("EventSchema (catalog)", () => {
       "VaultDeletionCancelled",
       "VaultDeleted",
     ];
-    expect(types).toHaveLength(14);
+    expect(registeredTypes).toHaveLength(14);
+    expect(new Set(registeredTypes)).toEqual(new Set(expectedTypes));
   });
 
   it("rejects unknown event types so the reducer can rely on type narrowing", () => {
@@ -75,6 +82,41 @@ describe("EventSchema (catalog)", () => {
     if (parsed.type === "ItemSaved") {
       expectTypeOf(parsed.data.url).toBeString();
     }
+  });
+
+  it("is exhaustively handled by type (catches accidental discriminator widening)", () => {
+    function assertNever(x: never): never {
+      throw new Error(`Unhandled event type: ${(x as Event).type}`);
+    }
+    // Parse each registered event type and verify the switch is exhaustive.
+    // If a future edit drops a discriminator, TypeScript will error here.
+    const event = EventSchema.parse({
+      type: "ItemArchived",
+      ...envelope,
+      data: { itemId: "i1" },
+    });
+    let handled = false;
+    switch (event.type) {
+      case "ItemSaved":
+      case "ItemArchived":
+      case "ItemUnarchived":
+      case "ItemLiked":
+      case "ItemUnliked":
+      case "ItemTagged":
+      case "ItemUntagged":
+      case "ItemTitleEdited":
+      case "ItemDeleted":
+      case "DeviceRegistered":
+      case "DeviceRevoked":
+      case "VaultDeletionScheduled":
+      case "VaultDeletionCancelled":
+      case "VaultDeleted":
+        handled = true;
+        break;
+      default:
+        assertNever(event);
+    }
+    expect(handled).toBe(true);
   });
 });
 
