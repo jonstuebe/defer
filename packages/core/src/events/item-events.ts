@@ -3,6 +3,13 @@ import { envelopeFields } from "./envelope.js";
 
 // Forward-compat note: Adding optional fields is safe; renaming or removing
 // is forbidden — use a new event type.
+//
+// Each event ships two schemas:
+// - `XxxSchema` — inbound (sequenced) shape, has `seq` from the relay.
+// - `PendingXxxSchema` — outbound (pre-relay) shape, no `seq` yet.
+//
+// Pending schemas are derived via `.omit({ seq: true })` so the two stay in
+// lockstep automatically when fields are added.
 
 export const ItemSavedSchema = z.object({
   type: z.literal("ItemSaved"),
@@ -16,6 +23,8 @@ export const ItemSavedSchema = z.object({
   }),
 });
 export type ItemSaved = z.infer<typeof ItemSavedSchema>;
+export const PendingItemSavedSchema = ItemSavedSchema.omit({ seq: true });
+export type PendingItemSaved = z.infer<typeof PendingItemSavedSchema>;
 
 export const ItemArchivedSchema = z.object({
   type: z.literal("ItemArchived"),
@@ -25,6 +34,8 @@ export const ItemArchivedSchema = z.object({
   }),
 });
 export type ItemArchived = z.infer<typeof ItemArchivedSchema>;
+export const PendingItemArchivedSchema = ItemArchivedSchema.omit({ seq: true });
+export type PendingItemArchived = z.infer<typeof PendingItemArchivedSchema>;
 
 export const ItemUnarchivedSchema = z.object({
   type: z.literal("ItemUnarchived"),
@@ -34,6 +45,8 @@ export const ItemUnarchivedSchema = z.object({
   }),
 });
 export type ItemUnarchived = z.infer<typeof ItemUnarchivedSchema>;
+export const PendingItemUnarchivedSchema = ItemUnarchivedSchema.omit({ seq: true });
+export type PendingItemUnarchived = z.infer<typeof PendingItemUnarchivedSchema>;
 
 export const ItemLikedSchema = z.object({
   type: z.literal("ItemLiked"),
@@ -43,6 +56,8 @@ export const ItemLikedSchema = z.object({
   }),
 });
 export type ItemLiked = z.infer<typeof ItemLikedSchema>;
+export const PendingItemLikedSchema = ItemLikedSchema.omit({ seq: true });
+export type PendingItemLiked = z.infer<typeof PendingItemLikedSchema>;
 
 export const ItemUnlikedSchema = z.object({
   type: z.literal("ItemUnliked"),
@@ -52,6 +67,8 @@ export const ItemUnlikedSchema = z.object({
   }),
 });
 export type ItemUnliked = z.infer<typeof ItemUnlikedSchema>;
+export const PendingItemUnlikedSchema = ItemUnlikedSchema.omit({ seq: true });
+export type PendingItemUnliked = z.infer<typeof PendingItemUnlikedSchema>;
 
 export const ItemTaggedSchema = z.object({
   type: z.literal("ItemTagged"),
@@ -62,6 +79,8 @@ export const ItemTaggedSchema = z.object({
   }),
 });
 export type ItemTagged = z.infer<typeof ItemTaggedSchema>;
+export const PendingItemTaggedSchema = ItemTaggedSchema.omit({ seq: true });
+export type PendingItemTagged = z.infer<typeof PendingItemTaggedSchema>;
 
 export const ItemUntaggedSchema = z.object({
   type: z.literal("ItemUntagged"),
@@ -72,6 +91,8 @@ export const ItemUntaggedSchema = z.object({
   }),
 });
 export type ItemUntagged = z.infer<typeof ItemUntaggedSchema>;
+export const PendingItemUntaggedSchema = ItemUntaggedSchema.omit({ seq: true });
+export type PendingItemUntagged = z.infer<typeof PendingItemUntaggedSchema>;
 
 export const ItemTitleEditedSchema = z.object({
   type: z.literal("ItemTitleEdited"),
@@ -82,6 +103,8 @@ export const ItemTitleEditedSchema = z.object({
   }),
 });
 export type ItemTitleEdited = z.infer<typeof ItemTitleEditedSchema>;
+export const PendingItemTitleEditedSchema = ItemTitleEditedSchema.omit({ seq: true });
+export type PendingItemTitleEdited = z.infer<typeof PendingItemTitleEditedSchema>;
 
 export const ItemDeletedSchema = z.object({
   type: z.literal("ItemDeleted"),
@@ -91,3 +114,5 @@ export const ItemDeletedSchema = z.object({
   }),
 });
 export type ItemDeleted = z.infer<typeof ItemDeletedSchema>;
+export const PendingItemDeletedSchema = ItemDeletedSchema.omit({ seq: true });
+export type PendingItemDeleted = z.infer<typeof PendingItemDeletedSchema>;

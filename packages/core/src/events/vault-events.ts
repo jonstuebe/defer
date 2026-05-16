@@ -3,6 +3,8 @@ import { envelopeFields } from "./envelope.js";
 
 // Forward-compat note: Adding optional fields is safe; renaming or removing
 // is forbidden — use a new event type.
+//
+// Each event ships two schemas — see `item-events.ts` for the rationale.
 
 // Design note: the envelope's `deviceId` already identifies which paired
 // device emitted the event, so prior drafts of these schemas that carried
@@ -22,6 +24,8 @@ export const VaultDeletionScheduledSchema = z.object({
   }),
 });
 export type VaultDeletionScheduled = z.infer<typeof VaultDeletionScheduledSchema>;
+export const PendingVaultDeletionScheduledSchema = VaultDeletionScheduledSchema.omit({ seq: true });
+export type PendingVaultDeletionScheduled = z.infer<typeof PendingVaultDeletionScheduledSchema>;
 
 export const VaultDeletionCancelledSchema = z.object({
   type: z.literal("VaultDeletionCancelled"),
@@ -29,6 +33,8 @@ export const VaultDeletionCancelledSchema = z.object({
   data: z.object({}),
 });
 export type VaultDeletionCancelled = z.infer<typeof VaultDeletionCancelledSchema>;
+export const PendingVaultDeletionCancelledSchema = VaultDeletionCancelledSchema.omit({ seq: true });
+export type PendingVaultDeletionCancelled = z.infer<typeof PendingVaultDeletionCancelledSchema>;
 
 // `VaultDeleted` is the only event in the v1 catalog emitted by the Relay
 // rather than a paired device — specifically, by the vault's Durable Object
@@ -48,3 +54,5 @@ export const VaultDeletedSchema = z.object({
   }),
 });
 export type VaultDeleted = z.infer<typeof VaultDeletedSchema>;
+export const PendingVaultDeletedSchema = VaultDeletedSchema.omit({ seq: true });
+export type PendingVaultDeleted = z.infer<typeof PendingVaultDeletedSchema>;

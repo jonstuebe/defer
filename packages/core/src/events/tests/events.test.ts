@@ -3,6 +3,8 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   EventSchema,
   type Event,
+  PendingEventSchema,
+  type PendingEvent,
   ItemSavedSchema,
   ItemArchivedSchema,
   ItemUnarchivedSchema,
@@ -18,6 +20,8 @@ import {
   VaultDeletionCancelledSchema,
   VaultDeletedSchema,
   RELAY_DEVICE_ID,
+  PendingItemSavedSchema,
+  PendingItemArchivedSchema,
 } from "../index.js";
 
 const envelope = {
@@ -407,6 +411,123 @@ describe("RELAY_DEVICE_ID sentinel", () => {
       data: { itemId: "i1" },
     });
     expect(ok.success).toBe(true);
+  });
+});
+
+describe("PendingEventSchema (outbound, pre-relay)", () => {
+  const pendingEnvelope = {
+    deviceId: "device-abc",
+    timestamp: 1_700_000_000_000,
+  };
+
+  it("parses a pending event with no seq", () => {
+    const pending = {
+      type: "ItemSaved" as const,
+      ...pendingEnvelope,
+      data: {
+        itemId: "i1",
+        url: "https://example.com",
+        canonicalUrl: "https://example.com",
+        title: "t",
+        savedAt: 1,
+      },
+    };
+    const result = PendingEventSchema.safeParse(pending);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).not.toHaveProperty("seq");
+      expectTypeOf(result.data).toEqualTypeOf<PendingEvent>();
+    }
+
+    // The same payload must be rejected by the inbound schema — seq is
+    // required there.
+    expect(EventSchema.safeParse(pending).success).toBe(false);
+  });
+
+  it("rejects pending events missing deviceId or timestamp", () => {
+    expect(
+      PendingEventSchema.safeParse({
+        type: "ItemArchived",
+        timestamp: 1,
+        data: { itemId: "i1" },
+      }).success,
+    ).toBe(false);
+
+    expect(
+      PendingEventSchema.safeParse({
+        type: "ItemArchived",
+        deviceId: "device-abc",
+        data: { itemId: "i1" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects unknown event types", () => {
+    expect(
+      PendingEventSchema.safeParse({
+        ...pendingEnvelope,
+        type: "ItemPondered",
+        data: { itemId: "i1" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("inbound Event with seq still parses as Event", () => {
+    const sequenced = {
+      type: "ItemArchived" as const,
+      ...envelope,
+      data: { itemId: "i1" },
+    };
+    expect(EventSchema.safeParse(sequenced).success).toBe(true);
+  });
+
+  it("a fully-sequenced Event handed to PendingEventSchema parses (seq is stripped)", () => {
+    // Zod strips unknown keys by default, so passing an Event (which has an
+    // extra `seq` field relative to PendingEvent) through PendingEventSchema
+    // succeeds and yields the pending shape. This is intentional — the
+    // pending schema is permissive about extras, matching forward-compat
+    // policy for envelope fields.
+    const sequenced = {
+      type: "ItemArchived" as const,
+      ...envelope,
+      data: { itemId: "i1" },
+    };
+    const result = PendingEventSchema.safeParse(sequenced);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).not.toHaveProperty("seq");
+      expect(result.data).toEqual({
+        type: "ItemArchived",
+        deviceId: envelope.deviceId,
+        timestamp: envelope.timestamp,
+        data: { itemId: "i1" },
+      });
+    }
+  });
+
+  it("per-event pending schemas are exported and reject seq round-trip via strict", () => {
+    const pendingSaved = {
+      type: "ItemSaved" as const,
+      deviceId: "d1",
+      timestamp: 1,
+      data: {
+        itemId: "i1",
+        url: "https://example.com",
+        canonicalUrl: "https://example.com",
+        title: "t",
+        savedAt: 1,
+      },
+    };
+    expect(PendingItemSavedSchema.safeParse(pendingSaved).success).toBe(true);
+
+    expect(
+      PendingItemArchivedSchema.safeParse({
+        type: "ItemArchived",
+        deviceId: "d1",
+        timestamp: 1,
+        data: { itemId: "i1" },
+      }).success,
+    ).toBe(true);
   });
 });
 

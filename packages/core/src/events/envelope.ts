@@ -1,11 +1,11 @@
 import { z } from "zod";
 
-// `envelopeFields` below is an internal authoring helper used by sibling
-// event-schema modules to spread the shared envelope fields. It is
-// intentionally NOT re-exported from `./index.ts` — exposing it would let
-// consumers build envelope-shaped schemas that silently diverge from this
-// source of truth. `RELAY_DEVICE_ID` is part of the public API and IS
-// re-exported explicitly from the barrel.
+// `envelopeFields` and `pendingEnvelopeFields` below are internal authoring
+// helpers used by sibling event-schema modules to spread the shared envelope
+// fields. They are intentionally NOT re-exported from `./index.ts` — exposing
+// them would let consumers build envelope-shaped schemas that silently diverge
+// from this source of truth. `RELAY_DEVICE_ID` is part of the public API and
+// IS re-exported explicitly from the barrel.
 
 // Forward-compat note: Adding optional fields is safe; renaming or removing
 // is forbidden — use a new event type.
@@ -31,8 +31,19 @@ import { z } from "zod";
  */
 export const RELAY_DEVICE_ID = "relay";
 
-export const envelopeFields = {
-  seq: z.number().int().nonnegative(),
+// Pending (outbound) envelope: the shape clients emit before the relay has
+// assigned a `seq`. Per ADR-0002, the relay assigns a monotonic `seq` per
+// vault on arrival, so locally queued events and `relayClient.post(...)`
+// payloads have no `seq` yet.
+export const pendingEnvelopeFields = {
   deviceId: z.string().min(1),
   timestamp: z.number().int().nonnegative(),
+};
+
+// Inbound (sequenced) envelope: the shape returned by the relay, with the
+// assigned `seq`. Use this for anything downstream of the relay (sync, log
+// replay, reducer input).
+export const envelopeFields = {
+  seq: z.number().int().nonnegative(),
+  ...pendingEnvelopeFields,
 };

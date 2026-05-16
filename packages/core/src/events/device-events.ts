@@ -3,6 +3,8 @@ import { envelopeFields } from "./envelope.js";
 
 // Forward-compat note: Adding optional fields is safe; renaming or removing
 // is forbidden — use a new event type.
+//
+// Each event ships two schemas — see `item-events.ts` for the rationale.
 
 export const DeviceRegisteredSchema = z.object({
   type: z.literal("DeviceRegistered"),
@@ -17,6 +19,8 @@ export const DeviceRegisteredSchema = z.object({
   }),
 });
 export type DeviceRegistered = z.infer<typeof DeviceRegisteredSchema>;
+export const PendingDeviceRegisteredSchema = DeviceRegisteredSchema.omit({ seq: true });
+export type PendingDeviceRegistered = z.infer<typeof PendingDeviceRegisteredSchema>;
 
 export const DeviceRevokedSchema = z.object({
   type: z.literal("DeviceRevoked"),
@@ -26,3 +30,5 @@ export const DeviceRevokedSchema = z.object({
   }),
 });
 export type DeviceRevoked = z.infer<typeof DeviceRevokedSchema>;
+export const PendingDeviceRevokedSchema = DeviceRevokedSchema.omit({ seq: true });
+export type PendingDeviceRevoked = z.infer<typeof PendingDeviceRevokedSchema>;
