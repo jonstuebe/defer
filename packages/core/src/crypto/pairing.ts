@@ -1,4 +1,4 @@
-import { sodium } from "./sodium.js";
+import { assertReady, sodium } from "./sodium.js";
 
 const X25519_PUBLIC_KEY_BYTES = 32;
 const X25519_PRIVATE_KEY_BYTES = 32;
@@ -9,11 +9,13 @@ export interface PairingKeypair {
 }
 
 export function generateEphemeralPairingKeypair(): PairingKeypair {
+  assertReady();
   const kp = sodium.crypto_box_keypair();
   return { publicKey: kp.publicKey, privateKey: kp.privateKey };
 }
 
 export function sealForPairing(payload: Uint8Array, recipientPubkey: Uint8Array): Uint8Array {
+  assertReady();
   if (!(payload instanceof Uint8Array)) {
     throw new TypeError("payload must be a Uint8Array");
   }
@@ -27,6 +29,7 @@ export function sealForPairing(payload: Uint8Array, recipientPubkey: Uint8Array)
 }
 
 export function openPairingSeal(sealed: Uint8Array, recipientKeypair: PairingKeypair): Uint8Array {
+  assertReady();
   if (!(sealed instanceof Uint8Array)) {
     throw new TypeError("sealed must be a Uint8Array");
   }

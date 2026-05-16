@@ -1,4 +1,4 @@
-import { sodium } from "./sodium.js";
+import { assertReady, sodium } from "./sodium.js";
 
 const VAULT_KEY_BYTES = 32;
 const HMAC_SHA256_BYTES = 32;
@@ -10,6 +10,7 @@ function assertVaultKey(vaultKey: Uint8Array): void {
 }
 
 export function signWithVaultKey(vaultKey: Uint8Array, message: Uint8Array): Uint8Array {
+  assertReady();
   assertVaultKey(vaultKey);
   if (!(message instanceof Uint8Array)) {
     throw new TypeError("message must be a Uint8Array");
@@ -22,6 +23,7 @@ export function verifyVaultKeySignature(
   message: Uint8Array,
   signature: Uint8Array,
 ): boolean {
+  assertReady();
   assertVaultKey(vaultKey);
   if (!(message instanceof Uint8Array)) {
     throw new TypeError("message must be a Uint8Array");

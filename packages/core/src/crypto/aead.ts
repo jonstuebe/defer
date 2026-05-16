@@ -1,4 +1,4 @@
-import { sodium } from "./sodium.js";
+import { assertReady, sodium } from "./sodium.js";
 
 const VAULT_KEY_BYTES = 32;
 const VAULT_ID_BYTES = 16;
@@ -56,6 +56,7 @@ export function encodeEventAad(aad: EventAad): Uint8Array {
 }
 
 export function encryptEvent(opts: EncryptEventOpts): EncryptedEvent {
+  assertReady();
   assertVaultKey(opts.vaultKey);
   if (!(opts.plaintext instanceof Uint8Array)) {
     throw new TypeError("plaintext must be a Uint8Array");
@@ -73,6 +74,7 @@ export function encryptEvent(opts: EncryptEventOpts): EncryptedEvent {
 }
 
 export function decryptEvent(opts: DecryptEventOpts): Uint8Array {
+  assertReady();
   assertVaultKey(opts.vaultKey);
   if (!(opts.nonce instanceof Uint8Array) || opts.nonce.length !== NONCE_BYTES) {
     throw new RangeError(`nonce must be a ${NONCE_BYTES}-byte Uint8Array`);
