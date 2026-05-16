@@ -9,6 +9,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./canonicalize": {
+      "types": "./src/canonicalize/index.ts",
+      "default": "./src/canonicalize/index.ts"
     }
   },
   "scripts": {
@@ -17,6 +21,8 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@types/node": "^22.10.1",
+    "fast-check": "^3.23.1",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"
   }
