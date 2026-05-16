@@ -9,6 +9,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./canonicalize": {
+      "types": "./src/canonicalize/index.ts",
+      "default": "./src/canonicalize/index.ts"
     }
   },
   "scripts": {
@@ -21,6 +25,8 @@
     "@scure/bip39": "^2.2.0"
   },
   "devDependencies": {
+    "@types/node": "^22.10.1",
+    "fast-check": "^3.23.1",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"
   }
