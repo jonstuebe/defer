@@ -17,6 +17,7 @@ import {
   VaultDeletionScheduledSchema,
   VaultDeletionCancelledSchema,
   VaultDeletedSchema,
+  RELAY_DEVICE_ID,
 } from "../index.js";
 
 const envelope = {
@@ -354,6 +355,39 @@ describe("VaultDeletionScheduled / Cancelled / Deleted", () => {
         data: { deletedAt: "now" },
       }).success,
     ).toBe(false);
+  });
+
+  it("VaultDeleted parses when emitted by the relay (deviceId = RELAY_DEVICE_ID)", () => {
+    const relayEmitted = {
+      type: "VaultDeleted" as const,
+      ...envelope,
+      deviceId: RELAY_DEVICE_ID,
+      data: { deletedAt: 1_700_000_000_000 },
+    };
+    expect(VaultDeletedSchema.safeParse(relayEmitted).success).toBe(true);
+    expect(EventSchema.safeParse(relayEmitted).success).toBe(true);
+  });
+});
+
+describe("RELAY_DEVICE_ID sentinel", () => {
+  it("is the canonical relay deviceId value", () => {
+    // Canonical value any Relay implementation must use; pinned by this test
+    // so a change to the constant is a deliberate protocol change.
+    expect(RELAY_DEVICE_ID).toBe("relay");
+  });
+
+  it("is a plain non-empty string and so passes envelope validation on any event type", () => {
+    // Schema-wise the sentinel is just a string — its meaning is enforced by
+    // convention and (for VaultDeleted) by the vault-key signature check.
+    // A regular ItemArchived event using "relay" as its deviceId is still a
+    // structurally valid event.
+    const ok = EventSchema.safeParse({
+      type: "ItemArchived",
+      ...envelope,
+      deviceId: RELAY_DEVICE_ID,
+      data: { itemId: "i1" },
+    });
+    expect(ok.success).toBe(true);
   });
 });
 

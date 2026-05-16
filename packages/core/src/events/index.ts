@@ -18,7 +18,13 @@ import {
   VaultDeletedSchema,
 } from "./vault-events.js";
 
-export * from "./envelope.js";
+// `./envelope.js` is intentionally NOT re-exported via `export *`. Its
+// `envelopeFields` value is an internal authoring helper for per-event
+// schemas and must not leak into the package's public API — consumers
+// building their own envelope-shaped schemas would silently diverge from
+// this source of truth. The public `RELAY_DEVICE_ID` constant is re-exported
+// explicitly below.
+export { RELAY_DEVICE_ID } from "./envelope.js";
 export * from "./item-events.js";
 export * from "./device-events.js";
 export * from "./vault-events.js";
