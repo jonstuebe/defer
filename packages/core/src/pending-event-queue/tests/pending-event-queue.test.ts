@@ -224,6 +224,25 @@ describe("PendingEventQueue", () => {
     expect(peeked[0]!.attemptCount).toBe(1);
   });
 
+  it("flush() awaits all queued mutations", async () => {
+    const writes: number[] = [];
+    const storage: StoragePort = {
+      async read() {
+        return [];
+      },
+      async write(entries) {
+        await new Promise((r) => setTimeout(r, 1));
+        writes.push(entries.length);
+      },
+    };
+    const queue = new PendingEventQueue(storage);
+    void queue.enqueue(bytes(1));
+    void queue.enqueue(bytes(2));
+    void queue.enqueue(bytes(3));
+    await queue.flush();
+    expect(writes).toEqual([1, 2, 3]);
+  });
+
   it("serialises concurrent mutations so storage observes writes in order", async () => {
     // Each `write(entries)` records the length of the snapshot. If mutations
     // run concurrently their writes can interleave and storage will observe

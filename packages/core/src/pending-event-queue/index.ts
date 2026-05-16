@@ -57,7 +57,9 @@ export class PendingEventQueue {
   }
 
   async #hydrate(): Promise<void> {
-    const loaded = await this.#storage.read();
+    // Clone before mutating so we never write through to a `StoragePort`
+    // implementation that returned us its internal references.
+    const loaded = cloneEntries(await this.#storage.read());
     let mutated = false;
     for (const entry of loaded) {
       if (entry.status === "in-flight") {
@@ -78,8 +80,9 @@ export class PendingEventQueue {
   // Queue a mutation onto the write chain. The chain itself never rejects so
   // one failing op cannot poison subsequent ops; the original op's
   // success/failure is still propagated to its own caller via `next`.
-  async #enqueueOp<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.#writeChain.then(fn, fn);
+  async #runOnChain<T>(fn: () => Promise<T>): Promise<T> {
+    const run = (): Promise<T> => fn();
+    const next = this.#writeChain.then(run, run);
     this.#writeChain = next.then(
       () => {},
       () => {},
@@ -87,12 +90,22 @@ export class PendingEventQueue {
     return next;
   }
 
+  /**
+   * Resolves when every mutation queued before this call has been persisted.
+   * Useful at process-shutdown or before tearing down a storage backend.
+   * Does not block new mutations issued after `flush()` is called.
+   */
+  async flush(): Promise<void> {
+    await this.#writeChain;
+  }
+
   async enqueue(encryptedEvent: Uint8Array): Promise<PendingEventQueueEntry> {
-    await this.#ensureReady();
-    // Snapshot input bytes before entering the chain so later mutations to
-    // the caller's buffer cannot affect what we persist.
+    // Snapshot input bytes synchronously, before any await, so caller-side
+    // mutations to the buffer cannot affect what we persist — even if the
+    // caller mutates between issuing this call and the chain step running.
     const eventBytes = new Uint8Array(encryptedEvent);
-    return this.#enqueueOp(async () => {
+    return this.#runOnChain(async () => {
+      await this.#ensureReady();
       const entry: PendingEventQueueEntry = {
         id: crypto.randomUUID(),
         event: eventBytes,
@@ -107,6 +120,15 @@ export class PendingEventQueue {
     });
   }
 
+  /**
+   * Snapshot of entries with status `pending` or `failed`, in enqueue order.
+   *
+   * Reflects in-memory state at call time. Mutations that have been issued
+   * concurrently but not yet persisted (i.e. still queued on the internal
+   * write chain) are NOT visible to this call — `peek()` does not enter the
+   * chain. Callers needing to observe a specific mutation should `await` it
+   * before calling `peek()`.
+   */
   async peek(limit?: number): Promise<PendingEventQueueEntry[]> {
     await this.#ensureReady();
     const visible = this.#entries.filter(
@@ -117,8 +139,8 @@ export class PendingEventQueue {
   }
 
   async markInFlight(ids: string[]): Promise<void> {
-    await this.#ensureReady();
-    return this.#enqueueOp(async () => {
+    return this.#runOnChain(async () => {
+      await this.#ensureReady();
       const idSet = new Set(ids);
       const now = Date.now();
       let mutated = false;
@@ -136,8 +158,8 @@ export class PendingEventQueue {
   }
 
   async markSynced(ids: string[]): Promise<void> {
-    await this.#ensureReady();
-    return this.#enqueueOp(async () => {
+    return this.#runOnChain(async () => {
+      await this.#ensureReady();
       const idSet = new Set(ids);
       const next = this.#entries.filter((entry) => !idSet.has(entry.id));
       if (next.length !== this.#entries.length) {
@@ -148,8 +170,8 @@ export class PendingEventQueue {
   }
 
   async markFailed(ids: string[]): Promise<void> {
-    await this.#ensureReady();
-    return this.#enqueueOp(async () => {
+    return this.#runOnChain(async () => {
+      await this.#ensureReady();
       const idSet = new Set(ids);
       const now = Date.now();
       let mutated = false;
