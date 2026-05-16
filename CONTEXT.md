@@ -55,8 +55,8 @@ The v1 event catalog (closed set; adding new types requires a protocol version b
 - `ItemDeleted { itemId }` — hard delete; tombstone garbage-collected after a retention window
 - `DeviceRegistered { deviceId, deviceName, deviceType, registeredAt }` — emitted by a new device on first sync after **Pairing**; appears in the Devices list across all paired devices
 - `DeviceRevoked { deviceId }` — emitted when a device is revoked; the corresponding **Device auth token** is also deleted at the **Relay** via a separate authenticated API call. The revoked device's last act is to POST this event _before_ its token is deleted, with a durable `pendingRevocation` local flag to survive crashes
-- `VaultDeletionScheduled { scheduledFor, scheduledBy }` — signed with the **Vault key**; any paired **Device** can initiate. Triggers a 48-hour grace window during which the deletion can be cancelled
-- `VaultDeletionCancelled { cancelledBy }` — signed with the **Vault key**; emitted by any paired **Device** to abort an in-progress deletion within the grace window
+- `VaultDeletionScheduled { scheduledFor }` — signed with the **Vault key**; any paired **Device** can initiate (the emitter's `deviceId` is on the event envelope, so it is not duplicated in `data`). Triggers a 48-hour grace window during which the deletion can be cancelled
+- `VaultDeletionCancelled {}` — signed with the **Vault key**; emitted by any paired **Device** to abort an in-progress deletion within the grace window (emitter's `deviceId` is on the envelope; no per-event payload needed)
 - `VaultDeleted { deletedAt }` — signed with the **Vault key**; emitted by the **Relay**'s Durable Object alarm when the 48-hour window elapses. **This is the only event that triggers a client to wipe its local copy**; clients verify the signature against the vault key before wiping
 
 Read-state ("have I opened this?") is **not** an event — it's a local-only `lastOpenedAt` per device, used for UI dimming. It does not sync.

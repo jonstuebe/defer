@@ -302,42 +302,61 @@ describe("DeviceRevoked", () => {
 });
 
 describe("VaultDeletionScheduled / Cancelled / Deleted", () => {
-  it("VaultDeletionScheduled requires scheduledFor and scheduledBy", () => {
+  it("VaultDeletionScheduled requires scheduledFor (emitter is the envelope's deviceId)", () => {
     const valid = {
       type: "VaultDeletionScheduled" as const,
       ...envelope,
-      data: { scheduledFor: 1_700_000_000_000, scheduledBy: "d1" },
+      data: { scheduledFor: 1_700_000_000_000 },
     };
     expect(VaultDeletionScheduledSchema.safeParse(valid).success).toBe(true);
     expect(
       VaultDeletionScheduledSchema.safeParse({
         ...valid,
-        data: { scheduledFor: 1 },
+        data: {},
       }).success,
     ).toBe(false);
     expect(
       VaultDeletionScheduledSchema.safeParse({
         ...valid,
-        data: { scheduledFor: "soon", scheduledBy: "d1" },
+        data: { scheduledFor: "soon" },
       }).success,
     ).toBe(false);
   });
 
-  it("VaultDeletionCancelled requires cancelledBy", () => {
-    expect(
-      VaultDeletionCancelledSchema.safeParse({
-        type: "VaultDeletionCancelled",
-        ...envelope,
-        data: { cancelledBy: "d1" },
-      }).success,
-    ).toBe(true);
+  it("VaultDeletionScheduled strips legacy/unknown fields like `scheduledBy`", () => {
+    // The emitter is already on the envelope; per-event "scheduledBy" is
+    // not part of the schema. Forward-compat: unknown fields are ignored.
+    const result = VaultDeletionScheduledSchema.safeParse({
+      type: "VaultDeletionScheduled",
+      ...envelope,
+      data: { scheduledFor: 1_700_000_000_000, scheduledBy: "d1" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.data).toEqual({ scheduledFor: 1_700_000_000_000 });
+    }
+  });
+
+  it("VaultDeletionCancelled has no data fields (emitter is the envelope's deviceId)", () => {
     expect(
       VaultDeletionCancelledSchema.safeParse({
         type: "VaultDeletionCancelled",
         ...envelope,
         data: {},
       }).success,
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it("VaultDeletionCancelled strips legacy/unknown fields like `cancelledBy`", () => {
+    const result = VaultDeletionCancelledSchema.safeParse({
+      type: "VaultDeletionCancelled",
+      ...envelope,
+      data: { cancelledBy: "d1" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.data).toEqual({});
+    }
   });
 
   it("VaultDeleted requires a numeric deletedAt", () => {
