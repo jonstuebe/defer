@@ -8,7 +8,7 @@ One 32-byte symmetric key per vault, used with **XChaCha20-Poly1305** (via libso
 
 **Per-device auth at the relay.** Each device has its own random 32-byte `deviceAuthToken` minted at pairing (or at vault creation for the first device). The relay tracks the list of valid tokens per vault. Every relay request carries the token in `Authorization: Bearer`. Revoking deletes the token at the relay; the revoked device can no longer sync, though events it already pulled remain on disk. Real revocation, not theater.
 
-**Event AAD** includes `vaultId || deviceId || sequenceNumber`. A malicious or buggy relay can't silently reorder, drop, or replay events without devices noticing — AEAD verification fails on tampered ordering.
+**Event AAD** includes `vaultId || deviceId || clientNonce`, where `clientNonce` is a 16-byte cryptographically random value chosen by the client per event and carried in cleartext on the envelope. A malicious or buggy relay can't silently swap or replay ciphertext blobs without devices noticing — AEAD verification fails on tampered AAD — and the relay enforces per-vault `(deviceId, clientNonce)` uniqueness as a second line of defense against replay. See **ADR-0006** for the full rationale; this supersedes an earlier draft of this line that read `vaultId || deviceId || sequenceNumber`, which couldn't work because the relay assigns `seq` _after_ the client encrypts (ADR-0002).
 
 **Libraries:**
 
