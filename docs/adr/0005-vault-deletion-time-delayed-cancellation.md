@@ -1,6 +1,6 @@
 # Vault deletion uses a 48-hour grace period, not credential gating
 
-"Delete vault" is initiated from any signed-in device by typing the literal string `DEFER`. It does **not** require re-entering the 24-word recovery mnemonic. The deleting device signs a `VaultDeletionScheduled { scheduledFor: now + 48h, scheduledBy }` event with the vault key and emits it to the event log, plus calls `POST /vault/:id/schedule-deletion` on the relay with the same signed payload.
+"Delete vault" is initiated from any signed-in device by typing the literal string `DEFER`. It does **not** require re-entering the 24-word recovery mnemonic. The deleting device signs a `VaultDeletionScheduled { scheduledFor: now + 48h }` event with the vault key and emits it to the event log, plus calls `POST /vault/:id/schedule-deletion` on the relay with the same signed payload. The emitting device is identified by the event envelope's `deviceId`, so the event payload itself only carries `scheduledFor`.
 
 During the 48-hour window, all paired devices show a persistent banner ("Vault scheduled for deletion in 47:13:22 — Cancel"). Any paired device can emit a `VaultDeletionCancelled` event (also signed) to abort. After the window elapses, the relay's Durable Object alarm fires: it emits a final `VaultDeleted` event (signed with the vault key, payload from step 1 + relay-attached completion timestamp), calls `state.storage.deleteAll()`, and returns 410 to future requests.
 
