@@ -21,6 +21,10 @@ function randomVaultKey(rng: () => number): Uint8Array {
   return bytes;
 }
 
+function hex(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 describe("encodeVaultKey", () => {
   it("encodes a 32-byte vault key as 24 space-separated BIP-39 words", () => {
     const key = new Uint8Array(32);
@@ -35,6 +39,25 @@ describe("encodeVaultKey", () => {
   it("rejects vault keys that are not 32 bytes", () => {
     expect(() => encodeVaultKey(new Uint8Array(16))).toThrow(/32 bytes/);
     expect(() => encodeVaultKey(new Uint8Array(48))).toThrow(/32 bytes/);
+  });
+
+  it("produces distinct mnemonics for distinct vault keys", () => {
+    const rng = seededRng(0xfeed);
+    const a = encodeVaultKey(randomVaultKey(rng));
+    const b = encodeVaultKey(randomVaultKey(rng));
+    expect(a).not.toEqual(b);
+  });
+
+  // Fixed vector: locks in the BIP-39 encoding of the all-zero vault key
+  // so any future regression in the encoder (or accidental wordlist swap)
+  // is caught immediately.
+  it("matches the fixed vector for the all-zero vault key", () => {
+    const zero = new Uint8Array(32);
+    expect(encodeVaultKey(zero)).toBe(
+      "abandon abandon abandon abandon abandon abandon abandon abandon " +
+        "abandon abandon abandon abandon abandon abandon abandon abandon " +
+        "abandon abandon abandon abandon abandon abandon abandon art",
+    );
   });
 });
 
@@ -54,6 +77,7 @@ describe("decodeMnemonic", () => {
     const mnemonic = encodeVaultKey(key);
     const words = mnemonic.split(" ");
     const lastIdx = wordlist.indexOf(words[words.length - 1]!);
+    expect(lastIdx).toBeGreaterThanOrEqual(0);
     // Flipping the lowest bit of the final 11-bit chunk perturbs only the
     // checksum portion (entropy stays identical), so the recomputed checksum
     // must mismatch — a deterministic invalid mnemonic.
@@ -106,5 +130,16 @@ describe("deriveVaultIdFromKey", () => {
 
   it("rejects vault keys that are not 32 bytes", () => {
     expect(() => deriveVaultIdFromKey(new Uint8Array(16))).toThrow(/32 bytes/);
+  });
+
+  // Fixed vectors lock in the HKDF parameters (SHA-256, salt
+  // "defer-vault-id", no info, 16-byte output). Changing the salt or the
+  // hash silently breaks recovery for every existing vault, so a regression
+  // here must fail loudly.
+  it("matches fixed vectors for known vault keys", () => {
+    expect(hex(deriveVaultIdFromKey(new Uint8Array(32)))).toBe("0ee3850d909044c640c58090aea7dd41");
+    expect(hex(deriveVaultIdFromKey(new Uint8Array(32).fill(0xff)))).toBe(
+      "11d1ed5aab5f1bdc5ebd6613f568377b",
+    );
   });
 });
