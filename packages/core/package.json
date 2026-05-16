@@ -13,6 +13,10 @@
     "./canonicalize": {
       "types": "./src/canonicalize/index.ts",
       "default": "./src/canonicalize/index.ts"
+    },
+    "./crypto": {
+      "types": "./src/crypto/index.ts",
+      "default": "./src/crypto/index.ts"
     }
   },
   "scripts": {
@@ -23,6 +27,7 @@
   "dependencies": {
     "@noble/hashes": "^2.2.0",
     "@scure/bip39": "^2.2.0",
+    "libsodium-wrappers-sumo": "^0.8.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {
