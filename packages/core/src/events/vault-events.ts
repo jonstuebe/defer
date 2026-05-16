@@ -17,35 +17,35 @@ import { envelopeFields } from "./envelope.js";
 // ADR-0002 on the immutability rule, which applies once events are on the
 // wire.
 
-// Vault-key-signed events.
+// Vault-key-MAC'd events.
 //
 // CONTEXT.md describes VaultDeletionScheduled, VaultDeletionCancelled, and
-// VaultDeleted as "signed with the Vault key". For VaultDeleted in particular:
-// "clients verify the signature against the vault key before wiping". The
-// `signature` field added below carries that signature on the wire.
+// VaultDeleted as "signed with the Vault key" — shorthand for HMAC-SHA256
+// under the symmetric vault key (see CONTEXT.md's glossary note on the
+// Vault key). For VaultDeleted in particular: "clients verify the signature
+// against the vault key before wiping". The `signature` field below carries
+// that MAC on the wire.
 //
-// Loose wire-format validation only:
+// Wire format (ADR-0006):
+//   - HMAC-SHA256 output is 32 bytes, encoded as base64url without padding.
+//   - That's exactly 43 characters from the alphabet [A-Za-z0-9_-].
 //   - The schema's job is wire-format validation, not crypto verification.
-//   - Verification (recomputing the signature over the canonical bytes and
-//     comparing) is the responsibility of consumers; that code will live in
-//     a separate `crypto` module, not in this schema.
-//   - We accept any non-empty string here. The expected encoding is base64
-//     (or base64url) of the raw signature bytes, but the exact canonical
-//     serialization and signature algorithm are still open design questions
-//     (see issue #19 in the tracker, and ADR-0003 for the libsodium crypto
-//     baseline).
+//     Recomputing the MAC over the canonical bytes is the consumer's job
+//     (the `crypto` module in packages/core/src/crypto/signatures.ts).
 //
-// What the signature covers:
-//   - The signature is computed over the canonical serialization of the
-//     event with the `signature` field itself removed AND with the `seq`
-//     field removed. Clients sign before the relay assigns `seq`, so `seq`
-//     cannot be part of the signed bytes.
+// What the MAC covers (ADR-0006):
+//   - JCS (RFC 8785) canonicalization of the envelope JSON with the
+//     `signature` field removed AND the `seq` field removed. Clients sign
+//     before the relay assigns `seq`, so `seq` cannot be part of the signed
+//     bytes; verifiers must strip `seq` again before recomputing the MAC.
+
+// 32-byte HMAC-SHA256 output → 43 base64url chars unpadded.
+const SIGNATURE_REGEX = /^[A-Za-z0-9_-]{43}$/;
 
 const signatureField = {
-  // Base64 / base64url-encoded signature bytes. Looser than a regex on
-  // purpose — wire-format validation only. Crypto verification belongs to
-  // the consumer (planned `crypto` module), not this schema.
-  signature: z.string().min(1),
+  signature: z.string().regex(SIGNATURE_REGEX, {
+    message: "signature must be base64url-encoded HMAC-SHA256 (43 chars, no padding)",
+  }),
 };
 
 export const VaultDeletionScheduledSchema = z.object({

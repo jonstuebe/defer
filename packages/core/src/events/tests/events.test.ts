@@ -348,10 +348,11 @@ describe("DeviceRevoked", () => {
 });
 
 describe("VaultDeletionScheduled / Cancelled / Deleted", () => {
-  // Placeholder base64-ish blob. Wire-format validation only — these tests
-  // intentionally don't recompute or verify the signature; that's the job
-  // of a separate (not-yet-built) crypto module.
-  const signature = "c2lnbmF0dXJlLWJ5dGVz";
+  // Placeholder MAC. ADR-0006 pins the wire format: base64url-encoded
+  // HMAC-SHA256 (32 bytes → 43 chars unpadded). These tests check
+  // wire-format validation only — they don't recompute or verify the MAC;
+  // that's the job of the crypto module.
+  const signature = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"; // 43 chars
 
   it("VaultDeletionScheduled requires scheduledFor (emitter is the envelope's deviceId)", () => {
     const valid = {
@@ -445,10 +446,11 @@ describe("VaultDeletionScheduled / Cancelled / Deleted", () => {
     expect(EventSchema.safeParse(relayEmitted).success).toBe(true);
   });
 
-  describe("signature field (vault-key-signed events)", () => {
-    // CONTEXT.md: VaultDeletionScheduled, VaultDeletionCancelled, and
-    // VaultDeleted are "signed with the Vault key". A signed event with no
-    // signature on the wire is a contradiction — the schema must require it.
+  describe("signature field (vault-key-MAC'd events)", () => {
+    // CONTEXT.md / ADR-0006: VaultDeletionScheduled, VaultDeletionCancelled,
+    // and VaultDeleted are MAC'd with the Vault key (HMAC-SHA256). A MAC'd
+    // event with no signature on the wire is a contradiction — the schema
+    // must require it, and require the exact base64url-43-char wire format.
     const cases = [
       ["VaultDeletionScheduled", VaultDeletionScheduledSchema, { scheduledFor: 1_700_000_000_000 }],
       ["VaultDeletionCancelled", VaultDeletionCancelledSchema, {}],
@@ -456,7 +458,7 @@ describe("VaultDeletionScheduled / Cancelled / Deleted", () => {
     ] as const;
 
     for (const [type, schema, data] of cases) {
-      it(`${type} parses when signature is present`, () => {
+      it(`${type} parses when signature is a valid 43-char base64url string`, () => {
         expect(schema.safeParse({ type, ...envelope, signature, data }).success).toBe(true);
       });
 
@@ -466,6 +468,33 @@ describe("VaultDeletionScheduled / Cancelled / Deleted", () => {
 
       it(`${type} fails when signature is empty`, () => {
         expect(schema.safeParse({ type, ...envelope, signature: "", data }).success).toBe(false);
+      });
+
+      it(`${type} fails when signature is too short`, () => {
+        const tooShort = "A".repeat(42);
+        expect(schema.safeParse({ type, ...envelope, signature: tooShort, data }).success).toBe(
+          false,
+        );
+      });
+
+      it(`${type} fails when signature is too long`, () => {
+        const tooLong = "A".repeat(44);
+        expect(schema.safeParse({ type, ...envelope, signature: tooLong, data }).success).toBe(
+          false,
+        );
+      });
+
+      it(`${type} fails when signature uses non-base64url chars`, () => {
+        // '+' and '/' are base64 but not base64url; '=' is padding (also rejected).
+        const standardB64 = "A".repeat(42) + "+";
+        expect(schema.safeParse({ type, ...envelope, signature: standardB64, data }).success).toBe(
+          false,
+        );
+
+        const padded = "A".repeat(42) + "=";
+        expect(schema.safeParse({ type, ...envelope, signature: padded, data }).success).toBe(
+          false,
+        );
       });
 
       it(`${type} fails via the catalog when signature is missing`, () => {

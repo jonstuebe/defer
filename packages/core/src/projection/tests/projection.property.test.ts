@@ -43,7 +43,8 @@ function reduceAll(events: Event[]): VaultState {
 const ITEM_IDS = ["i1", "i2", "i3"] as const;
 const TAGS = ["alpha", "beta", "gamma"] as const;
 const DEVICE_IDS = ["dev-a", "dev-b"] as const;
-const SIG = "c2lnbmF0dXJlLWJ5dGVz";
+// Placeholder MAC. ADR-0006: base64url HMAC-SHA256 → 43 chars unpadded.
+const SIG = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 const itemIdArb = fc.constantFrom(...ITEM_IDS);
 const tagArb = fc.constantFrom(...TAGS);
