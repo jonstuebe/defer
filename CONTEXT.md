@@ -68,7 +68,8 @@ A client that participates in a vault. Identified by a stable `deviceId` (random
 
 - **Sync participant** — holds a full local copy of the vault by pulling and replaying every **Event**. The mobile and desktop **Apps** play this role.
 - **Thin sender** — never pulls events; only emits new ones. Holds at most a small local cache (e.g., recent tags it has used) for its own UX. The browser **Extensions** and iOS Share Extension play this role.
-  _Avoid_: client, peer
+
+_Avoid_: client, peer
 
 **Device auth token**:
 A random 32-byte secret minted for each **Device** during **Pairing** (or at vault creation for the first device). The **Relay** tracks the list of valid tokens per **Vault** and rejects requests that don't carry one. Revoking a device deletes its token — the device can no longer sync new events, though events it already pulled remain on disk.

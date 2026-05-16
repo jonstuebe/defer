@@ -1,3 +1,2 @@
 [tools]
 node = "22"
-"github:pnpm/pnpm" = { version = "11", exe = "pnpm" }
