@@ -306,10 +306,16 @@ describe("DeviceRevoked", () => {
 });
 
 describe("VaultDeletionScheduled / Cancelled / Deleted", () => {
+  // Placeholder base64-ish blob. Wire-format validation only — these tests
+  // intentionally don't recompute or verify the signature; that's the job
+  // of a separate (not-yet-built) crypto module.
+  const signature = "c2lnbmF0dXJlLWJ5dGVz";
+
   it("VaultDeletionScheduled requires scheduledFor (emitter is the envelope's deviceId)", () => {
     const valid = {
       type: "VaultDeletionScheduled" as const,
       ...envelope,
+      signature,
       data: { scheduledFor: 1_700_000_000_000 },
     };
     expect(VaultDeletionScheduledSchema.safeParse(valid).success).toBe(true);
@@ -333,6 +339,7 @@ describe("VaultDeletionScheduled / Cancelled / Deleted", () => {
     const result = VaultDeletionScheduledSchema.safeParse({
       type: "VaultDeletionScheduled",
       ...envelope,
+      signature,
       data: { scheduledFor: 1_700_000_000_000, scheduledBy: "d1" },
     });
     expect(result.success).toBe(true);
@@ -346,6 +353,7 @@ describe("VaultDeletionScheduled / Cancelled / Deleted", () => {
       VaultDeletionCancelledSchema.safeParse({
         type: "VaultDeletionCancelled",
         ...envelope,
+        signature,
         data: {},
       }).success,
     ).toBe(true);
@@ -355,6 +363,7 @@ describe("VaultDeletionScheduled / Cancelled / Deleted", () => {
     const result = VaultDeletionCancelledSchema.safeParse({
       type: "VaultDeletionCancelled",
       ...envelope,
+      signature,
       data: { cancelledBy: "d1" },
     });
     expect(result.success).toBe(true);
@@ -368,6 +377,7 @@ describe("VaultDeletionScheduled / Cancelled / Deleted", () => {
       VaultDeletedSchema.safeParse({
         type: "VaultDeleted",
         ...envelope,
+        signature,
         data: { deletedAt: 1_700_000_000_000 },
       }).success,
     ).toBe(true);
@@ -375,6 +385,7 @@ describe("VaultDeletionScheduled / Cancelled / Deleted", () => {
       VaultDeletedSchema.safeParse({
         type: "VaultDeleted",
         ...envelope,
+        signature,
         data: { deletedAt: "now" },
       }).success,
     ).toBe(false);
@@ -385,10 +396,40 @@ describe("VaultDeletionScheduled / Cancelled / Deleted", () => {
       type: "VaultDeleted" as const,
       ...envelope,
       deviceId: RELAY_DEVICE_ID,
+      signature,
       data: { deletedAt: 1_700_000_000_000 },
     };
     expect(VaultDeletedSchema.safeParse(relayEmitted).success).toBe(true);
     expect(EventSchema.safeParse(relayEmitted).success).toBe(true);
+  });
+
+  describe("signature field (vault-key-signed events)", () => {
+    // CONTEXT.md: VaultDeletionScheduled, VaultDeletionCancelled, and
+    // VaultDeleted are "signed with the Vault key". A signed event with no
+    // signature on the wire is a contradiction — the schema must require it.
+    const cases = [
+      ["VaultDeletionScheduled", VaultDeletionScheduledSchema, { scheduledFor: 1_700_000_000_000 }],
+      ["VaultDeletionCancelled", VaultDeletionCancelledSchema, {}],
+      ["VaultDeleted", VaultDeletedSchema, { deletedAt: 1_700_000_000_000 }],
+    ] as const;
+
+    for (const [type, schema, data] of cases) {
+      it(`${type} parses when signature is present`, () => {
+        expect(schema.safeParse({ type, ...envelope, signature, data }).success).toBe(true);
+      });
+
+      it(`${type} fails when signature is missing`, () => {
+        expect(schema.safeParse({ type, ...envelope, data }).success).toBe(false);
+      });
+
+      it(`${type} fails when signature is empty`, () => {
+        expect(schema.safeParse({ type, ...envelope, signature: "", data }).success).toBe(false);
+      });
+
+      it(`${type} fails via the catalog when signature is missing`, () => {
+        expect(EventSchema.safeParse({ type, ...envelope, data }).success).toBe(false);
+      });
+    }
   });
 });
 
