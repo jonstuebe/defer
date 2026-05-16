@@ -17,6 +17,10 @@
     "./crypto": {
       "types": "./src/crypto/index.ts",
       "default": "./src/crypto/index.ts"
+    },
+    "./pending-event-queue": {
+      "types": "./src/pending-event-queue/index.ts",
+      "default": "./src/pending-event-queue/index.ts"
     }
   },
   "scripts": {
