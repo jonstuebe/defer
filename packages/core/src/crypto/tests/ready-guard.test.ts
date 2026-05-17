@@ -42,7 +42,11 @@ describe("ready guard", () => {
       encryptEvent({
         vaultKey: new Uint8Array(32),
         plaintext: new Uint8Array(0),
-        aad: { vaultId: new Uint8Array(16), deviceId: new Uint8Array(16), seq: 0 },
+        aad: {
+          vaultId: new Uint8Array(16),
+          deviceId: new Uint8Array(16),
+          clientNonce: new Uint8Array(16),
+        },
       }),
     ).toThrow(/not initialized/);
   });
@@ -54,7 +58,11 @@ describe("ready guard", () => {
         vaultKey: new Uint8Array(32),
         nonce: new Uint8Array(24),
         ciphertext: new Uint8Array(16),
-        aad: { vaultId: new Uint8Array(16), deviceId: new Uint8Array(16), seq: 0 },
+        aad: {
+          vaultId: new Uint8Array(16),
+          deviceId: new Uint8Array(16),
+          clientNonce: new Uint8Array(16),
+        },
       }),
     ).toThrow(/not initialized/);
   });

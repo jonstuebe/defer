@@ -93,6 +93,10 @@ _Avoid_: vault creation, signup, registration
 The single JSON shape every non-2xx relay response carries: `{ error, code, requestId }`. `error` is a short human-readable category, `code` is a machine-readable closed enum (shipped from `@defer/core`'s `relayProtocol` sub-module), `requestId` is a UUID v7 echoed in the `X-Request-Id` header for log cross-correlation. Pinned by ADR-0007.
 _Avoid_: error response, error body, fault
 
+**Client nonce**:
+A 16-byte cryptographically random value the **Device** chooses per **Event** and carries cleartext on the envelope (`clientNonce`, base64url-encoded 22 chars). It is the third component of the AEAD AAD (`vaultId || deviceId || clientNonce`), and the **Relay** enforces uniqueness of `(deviceId, clientNonce)` per **Vault** so a replayed POST is a deterministic 409. Pinned by ADR-0006 §4.
+_Avoid_: event nonce (collides with the 24-byte AEAD nonce — separate concept), client id, request id
+
 ## Relationships
 
 - A **Vault** contains zero or more **Items**, derived by replaying its **Events**

@@ -1,15 +1,21 @@
 import { assertReady, sodium } from "./sodium.js";
 
+// AEAD over events. AAD layout is pinned by ADR-0006 §4: the client chooses a
+// 16-byte random `clientNonce` per event and the relay enforces uniqueness of
+// `(deviceId, clientNonce)` per vault. The AAD binds the ciphertext to a
+// value the relay cannot forge cheaply, without requiring the client to know
+// the relay-assigned `seq` at encrypt time.
+
 const VAULT_KEY_BYTES = 32;
 const VAULT_ID_BYTES = 16;
 const DEVICE_ID_BYTES = 16;
+const CLIENT_NONCE_BYTES = 16;
 const NONCE_BYTES = 24;
-const MAX_SAFE_SEQ = Number.MAX_SAFE_INTEGER;
 
 export interface EventAad {
   vaultId: Uint8Array;
   deviceId: Uint8Array;
-  seq: number;
+  clientNonce: Uint8Array;
 }
 
 export interface EncryptEventOpts {
@@ -43,15 +49,14 @@ export function encodeEventAad(aad: EventAad): Uint8Array {
   if (!(aad.deviceId instanceof Uint8Array) || aad.deviceId.length !== DEVICE_ID_BYTES) {
     throw new RangeError(`aad.deviceId must be a ${DEVICE_ID_BYTES}-byte Uint8Array`);
   }
-  if (!Number.isInteger(aad.seq) || aad.seq < 0 || aad.seq > MAX_SAFE_SEQ) {
-    throw new RangeError("aad.seq must be a non-negative safe integer");
+  if (!(aad.clientNonce instanceof Uint8Array) || aad.clientNonce.length !== CLIENT_NONCE_BYTES) {
+    throw new RangeError(`aad.clientNonce must be a ${CLIENT_NONCE_BYTES}-byte Uint8Array`);
   }
 
-  const out = new Uint8Array(VAULT_ID_BYTES + DEVICE_ID_BYTES + 8);
+  const out = new Uint8Array(VAULT_ID_BYTES + DEVICE_ID_BYTES + CLIENT_NONCE_BYTES);
   out.set(aad.vaultId, 0);
   out.set(aad.deviceId, VAULT_ID_BYTES);
-  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
-  view.setBigUint64(VAULT_ID_BYTES + DEVICE_ID_BYTES, BigInt(aad.seq), false);
+  out.set(aad.clientNonce, VAULT_ID_BYTES + DEVICE_ID_BYTES);
   return out;
 }
 

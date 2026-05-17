@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { apply, initialVaultState } from "../index.js";
 import type { Event } from "../../events/index.js";
 
+const CLIENT_NONCE = "AAAAAAAAAAAAAAAAAAAAAA";
+
 describe("forward-compatibility", () => {
   it('an event with type "UnknownInTheFuture" is identity-equal on apply', () => {
     const s0 = initialVaultState();
@@ -11,6 +13,7 @@ describe("forward-compatibility", () => {
       seq: 1,
       deviceId: "device-abc",
       timestamp: 1_700_000_000_000,
+      clientNonce: CLIENT_NONCE,
       data: { something: "new" },
     } as unknown as Event;
 
@@ -25,6 +28,7 @@ describe("forward-compatibility", () => {
       seq: 1,
       deviceId: "device-abc",
       timestamp: 1_700_000_000_000,
+      clientNonce: CLIENT_NONCE,
       data: {
         itemId: "i1",
         url: "https://example.com/a",
@@ -40,6 +44,7 @@ describe("forward-compatibility", () => {
       seq: 2,
       deviceId: "device-abc",
       timestamp: 1_700_000_000_500,
+      clientNonce: CLIENT_NONCE,
       data: {},
     } as unknown as Event;
     const after = apply(s, futureEvent);
