@@ -13,7 +13,13 @@ export {
   PushEventsRequestSchema,
   PushEventsResponseSchema,
   PullEventsResponseSchema,
+  RegisterDeviceRequestSchema,
+  RegisterDeviceResponseSchema,
+  RevokeDeviceResponseSchema,
   type PushEventsRequest,
   type PushEventsResponse,
   type PullEventsResponse,
+  type RegisterDeviceRequest,
+  type RegisterDeviceResponse,
+  type RevokeDeviceResponse,
 } from "./wire.js";

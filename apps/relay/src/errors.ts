@@ -13,6 +13,7 @@ const ERROR_CATEGORY_FOR_CODE: Record<ErrorCode, string> = {
   UNKNOWN_PAIRING_TOKEN: "not_found",
   DELETION_ALREADY_SCHEDULED: "conflict",
   DUPLICATE_CLIENT_NONCE: "conflict",
+  DEVICE_ALREADY_REGISTERED: "conflict",
   VAULT_DELETED: "gone",
   SCHEMA_VIOLATION: "invalid_request",
   RATE_LIMITED: "rate_limited",
