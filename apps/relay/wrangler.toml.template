@@ -1,0 +1,92 @@
+# wrangler.toml.template — the BYO-relay starter config.
+#
+# Copy this file to `wrangler.toml`, fill in the YOUR_… placeholders, then
+# `wrangler deploy`. See ./README.md for the full manual-deploy walkthrough.
+#
+# This template is a documented derivative of the live `wrangler.toml` used
+# by the upstream defer project. If you're forking, keep the structural
+# parts (DO class, migrations, KV binding name, rate-limit binding name) in
+# sync — the worker source code expects these names exactly.
+
+name = "defer-relay-YOUR_NAME"
+# ^ Pick anything. This becomes the worker name in the Cloudflare dashboard
+#   and (combined with your account's subdomain) the public hostname:
+#   <name>.<your-subdomain>.workers.dev.
+
+main = "src/index.ts"
+compatibility_date = "2026-05-16"
+# `nodejs_compat` is required by @cloudflare/vitest-pool-workers — the test
+# harness loads chunks of the vitest runtime that rely on `node:*` shims.
+# Production handler code MUST NOT import Node built-ins; the flag is only
+# here so the test pool can boot. See ADR-0001 (blind-relay invariant) and
+# ADR-0007 §3 (CORS policy).
+compatibility_flags = ["nodejs_compat"]
+
+# --- Durable Object: the per-vault relay ---
+# One DO instance per vault. Storage is encrypted at rest by Cloudflare and
+# capped at 10 GB per DO (more than enough for a single user's lifetime of
+# events at ~500 bytes/event). See ADR-0001 for the DO-per-vault topology.
+[[durable_objects.bindings]]
+name = "VAULT_RELAY"
+class_name = "VaultRelay"
+
+# DO class migrations. The `new_classes` entry registers `VaultRelay` on
+# first deploy. Do NOT remove or rename this once deployed — existing DO
+# instances are addressed by class name.
+[[migrations]]
+tag = "v1"
+new_classes = ["VaultRelay"]
+
+# --- KV: pairing-token store ---
+# Short-lived (≤60s TTL) sealed-payload store used during the device-pairing
+# handshake — the existing device writes a sealed (vaultKey, deviceAuthToken)
+# payload here keyed by a pairing token, and the new device reads it once
+# before it expires. Never holds anything decryptable by the relay.
+#
+# Create the namespace and its preview sibling before first deploy:
+#   wrangler kv namespace create PAIRING_TOKENS
+#   wrangler kv namespace create PAIRING_TOKENS --preview
+# then paste the returned IDs into `id` / `preview_id` below.
+[[kv_namespaces]]
+binding = "PAIRING_TOKENS"
+id = "YOUR_PRODUCTION_KV_NAMESPACE_ID"
+preview_id = "YOUR_PREVIEW_KV_NAMESPACE_ID"
+
+# --- Rate limit (Cloudflare unsafe binding) ---
+# Per-IP global limit on the unauthenticated /v1/pairing/* endpoints
+# (60 requests / 60 seconds, keyed by cf-connecting-ip).
+#
+# Per-vault rate limits (events 600/min, requests 1200/min) live inside the
+# Durable Object and don't need a binding. See README.md §"Operational notes".
+#
+# An in-memory fallback applies if this binding isn't provisioned — used by
+# the vitest-pool-workers test harness because the unsafe RateLimit binding
+# isn't exposed there. In production the real binding always applies.
+#
+# `namespace_id` is opaque to the runtime; pick any unused integer.
+[[unsafe.bindings]]
+name = "PAIRING_RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 60, period = 60 }
+
+# --- vars: relay-local config ---
+[vars]
+# Comma-separated extra origins to allow via CORS in addition to the
+# compiled-in defaults (chrome-extension://*, safari-web-extension://*,
+# tauri://*). Set this to e.g. "https://app.example.com" if you also serve
+# a web client from a custom domain. See ADR-0007 §3.
+CORS_ALLOWED_ORIGINS = ""
+
+# Dev-only placeholder for the log-hash secret. In production, set it via:
+#   wrangler secret put LOG_HMAC_SECRET
+# (then remove this line from `[vars]` so the wrangler secret is the only
+# source). The relay HMACs vaultIds and clientIps for log correlation; this
+# secret never leaves your worker. 32+ random bytes recommended.
+LOG_HMAC_SECRET = "REPLACE_VIA_WRANGLER_SECRET_PUT"
+
+# --- Observability ---
+# Sends structured logs (the JSON lines the relay emits per request) to
+# Cloudflare's logging surface. Tail them with `wrangler tail`.
+[observability]
+enabled = true
