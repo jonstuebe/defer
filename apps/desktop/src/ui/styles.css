@@ -1,0 +1,185 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f7f7f8;
+  --fg: #14181d;
+  --muted: #6b7280;
+  --border: #d8dce2;
+  --accent: #2563eb;
+  --danger: #b91c1c;
+  --card: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14181d;
+    --fg: #e7e9ec;
+    --muted: #9ba3ad;
+    --border: #2a3038;
+    --accent: #60a5fa;
+    --danger: #ef4444;
+    --card: #1c2128;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+button {
+  font: inherit;
+  background: var(--accent);
+  color: white;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input[type="text"],
+input[type="url"] {
+  font: inherit;
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.screen {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.danger {
+  color: var(--danger);
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mnemonic-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px 16px;
+  margin: 16px 0;
+}
+
+.mnemonic-word {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.mnemonic-word .position {
+  color: var(--muted);
+  width: 24px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mnemonic-word .word {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.verify-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px 16px;
+  align-items: center;
+  margin: 16px 0;
+}
+
+.verify-grid label {
+  text-align: right;
+}
+
+.empty-inbox-hint {
+  padding: 20px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+}
+
+.save-bar {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.item-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.item-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.item-row:hover {
+  background: var(--card);
+}
+
+.item-row .title {
+  font-weight: 500;
+}
+
+.item-row .meta {
+  display: flex;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
