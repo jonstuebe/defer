@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 import { EventSchema, PendingEventSchema } from "../events/index.js";
+import {
+  PendingVaultDeletionScheduledSchema,
+  PendingVaultDeletionCancelledSchema,
+  PendingVaultDeletedSchema,
+} from "../events/vault-events.js";
 
 // Wire shapes for the relay's event-log endpoints. The body of
 // `POST /v1/vault/:vaultId/events` and the body returned by
@@ -171,3 +176,69 @@ export const GetPairingResponseSchema = z
   })
   .strict();
 export type GetPairingResponse = z.infer<typeof GetPairingResponseSchema>;
+
+// --- Vault deletion control plane (issue #29) ----------------------------
+//
+// The 48-hour delete-vault countdown is armed by `POST /schedule-deletion`
+// and disarmed by `POST /cancel-deletion`. Both endpoints carry signed
+// envelopes (vault-key HMAC, see ADR-0006 §2) that the relay persists +
+// re-emits on the event log; the relay does NOT verify the MACs (it cannot
+// — blind-relay invariant, ADR-0001). The data plane (alarm fire,
+// `VaultDeleted` emission, `state.storage.deleteAll()` tombstone) lives in
+// issue #30; here we only cover the control plane (arm / disarm + event-log
+// append + DO alarm bookkeeping).
+//
+// `schedule-deletion` carries BOTH the `VaultDeletionScheduled` envelope
+// (signed by the scheduling device) AND the pre-signed `VaultDeleted`
+// envelope (signed by the same device, with `deviceId == RELAY_DEVICE_ID`
+// and `deletedAt == scheduledFor`, per ADR-0006 §5). The relay persists
+// `scheduled` on the event log immediately and stows `deleted` in DO
+// storage for the alarm to re-emit verbatim when the window elapses.
+
+/**
+ * Body shape for `POST /v1/vault/:vaultId/schedule-deletion`. Both envelopes
+ * are pre-`seq` (the relay assigns `seq` to `scheduled` on arrival; `deleted`
+ * gets its `seq` when the alarm fires in #30). The cross-field equality
+ * `scheduled.data.scheduledFor === deleted.data.deletedAt` and the
+ * `deleted.deviceId === RELAY_DEVICE_ID` constraints from ADR-0006 §5 are
+ * enforced server-side (post-Zod) — both produce `422 SCHEMA_VIOLATION`
+ * with a `details.reason` string.
+ */
+export const ScheduleDeletionRequestSchema = z.object({
+  scheduled: PendingVaultDeletionScheduledSchema,
+  deleted: PendingVaultDeletedSchema,
+});
+export type ScheduleDeletionRequest = z.infer<typeof ScheduleDeletionRequestSchema>;
+
+/**
+ * Response shape for `POST /v1/vault/:vaultId/schedule-deletion`. Echoes the
+ * `scheduledFor` so clients displaying the cross-device banner have it without
+ * re-parsing the request body, and returns the `seq` the relay assigned to
+ * the `scheduled` envelope (the only one that gets a `seq` at schedule time;
+ * the pre-signed `deleted` is held in DO storage until the alarm fires).
+ */
+export const ScheduleDeletionResponseSchema = z.object({
+  scheduledFor: z.number().int().nonnegative(),
+  assignedSeq: z.number().int().positive(),
+});
+export type ScheduleDeletionResponse = z.infer<typeof ScheduleDeletionResponseSchema>;
+
+/**
+ * Body shape for `POST /v1/vault/:vaultId/cancel-deletion`. Carries the
+ * signed `VaultDeletionCancelled` envelope; the relay deletes the stored
+ * pre-signed `VaultDeleted` blob (ADR-0006 §5 mandates this), cancels the
+ * DO alarm, and appends `cancelled` to the event log.
+ */
+export const CancelDeletionRequestSchema = z.object({
+  cancelled: PendingVaultDeletionCancelledSchema,
+});
+export type CancelDeletionRequest = z.infer<typeof CancelDeletionRequestSchema>;
+
+/**
+ * Response shape for `POST /v1/vault/:vaultId/cancel-deletion`. Returns the
+ * `seq` assigned to the `cancelled` envelope.
+ */
+export const CancelDeletionResponseSchema = z.object({
+  assignedSeq: z.number().int().positive(),
+});
+export type CancelDeletionResponse = z.infer<typeof CancelDeletionResponseSchema>;
