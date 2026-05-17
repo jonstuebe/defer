@@ -69,11 +69,19 @@ const ERROR_CODE_VALUES = Object.keys(ERROR_CODES) as [ErrorCode, ...ErrorCode[]
  * `X-Request-Id` response header. Validated specifically as v7 so a relay
  * that accidentally emits a v4 UUID (which would sort poorly in log scans)
  * trips the schema at the client boundary.
+ *
+ * `details` is an optional, free-form object carrying code-specific context
+ * (e.g. `{ eventIndex: 3 }` for `DUPLICATE_CLIENT_NONCE` to point at the
+ * offending event in a batch). The shape varies per code; clients SHOULD
+ * treat unknown fields as informational only. Added in ADR-0007 §2 (not a
+ * breaking change — the envelope is parsed non-strict and pre-existing
+ * producers continue to validate).
  */
 export const ErrorEnvelopeSchema = z.object({
   error: z.enum(ERROR_CATEGORIES),
   code: z.enum(ERROR_CODE_VALUES),
   requestId: z.uuidv7(),
+  details: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>;

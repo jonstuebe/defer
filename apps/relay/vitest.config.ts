@@ -17,6 +17,11 @@ export default defineWorkersConfig({
           bindings: {
             LOG_HMAC_SECRET: "dev-secret-for-tests",
             CORS_ALLOWED_ORIGINS: "",
+            // Test-only knob (see `Env.MAX_PAGE_SIZE_OVERRIDE` in env.ts):
+            // shrinks the GET /events page cap so the `nextSince` non-null
+            // path is reachable without pushing 1000+ events per test.
+            // Production deployments leave this unset.
+            MAX_PAGE_SIZE_OVERRIDE: "3",
           },
         },
       },
