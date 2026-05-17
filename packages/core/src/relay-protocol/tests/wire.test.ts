@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  GetPairingResponseSchema,
   MAX_BATCH_SIZE,
   MAX_PAGE_SIZE,
+  MAX_SEALED_PAYLOAD_BYTES,
+  PAIRING_TOKEN_REGEX,
   PullEventsResponseSchema,
   PushEventsRequestSchema,
   PushEventsResponseSchema,
+  PutPairingRequestSchema,
   RegisterDeviceRequestSchema,
   RegisterDeviceResponseSchema,
   RevokeDeviceResponseSchema,
@@ -246,6 +250,113 @@ describe("RevokeDeviceResponseSchema", () => {
 
   it("rejects { ok: false }", () => {
     const result = RevokeDeviceResponseSchema.safeParse({ ok: false });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("PAIRING_TOKEN_REGEX / MAX_SEALED_PAYLOAD_BYTES", () => {
+  it("pins the v1 pairing constants", () => {
+    // The regex shape is contractual — both client and relay validate against
+    // it, so changing it is a protocol bump. Same for the 4 KB ceiling.
+    expect(PAIRING_TOKEN_REGEX.source).toBe("^[A-Za-z0-9_-]{22}$");
+    expect(MAX_SEALED_PAYLOAD_BYTES).toBe(4096);
+  });
+});
+
+describe("PutPairingRequestSchema", () => {
+  // 22-char base64url pairing token + a tiny valid base64 payload. The
+  // payload here is `btoa("hi")` which is `"aGk="`.
+  const TOKEN = "AAAAAAAAAAAAAAAAAAAAAA";
+  const PAYLOAD = "aGk=";
+
+  it("parses a real example", () => {
+    const result = PutPairingRequestSchema.safeParse({
+      pairingToken: TOKEN,
+      sealedPayload: PAYLOAD,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a 21-char pairing token", () => {
+    const result = PutPairingRequestSchema.safeParse({
+      pairingToken: "A".repeat(21),
+      sealedPayload: PAYLOAD,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a 23-char pairing token", () => {
+    const result = PutPairingRequestSchema.safeParse({
+      pairingToken: "A".repeat(23),
+      sealedPayload: PAYLOAD,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects non-base64url characters in pairing token", () => {
+    const result = PutPairingRequestSchema.safeParse({
+      pairingToken: "AAAAAAAAAAAAAAAAAAAA++",
+      sealedPayload: PAYLOAD,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an empty sealedPayload", () => {
+    // Regex requires at least one base64 char.
+    const result = PutPairingRequestSchema.safeParse({
+      pairingToken: TOKEN,
+      sealedPayload: "",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects sealedPayload with non-base64 characters", () => {
+    const result = PutPairingRequestSchema.safeParse({
+      pairingToken: TOKEN,
+      sealedPayload: "not-base64!",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts sealedPayload with padding", () => {
+    const result = PutPairingRequestSchema.safeParse({
+      pairingToken: TOKEN,
+      sealedPayload: "YWJjZA==",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects requests missing sealedPayload", () => {
+    const result = PutPairingRequestSchema.safeParse({ pairingToken: TOKEN });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects requests with extra fields (.strict())", () => {
+    const result = PutPairingRequestSchema.safeParse({
+      pairingToken: TOKEN,
+      sealedPayload: PAYLOAD,
+      extra: "nope",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("GetPairingResponseSchema", () => {
+  it("parses a real example", () => {
+    const result = GetPairingResponseSchema.safeParse({ sealedPayload: "aGk=" });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects empty sealedPayload", () => {
+    const result = GetPairingResponseSchema.safeParse({ sealedPayload: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects extra fields", () => {
+    const result = GetPairingResponseSchema.safeParse({
+      sealedPayload: "aGk=",
+      extra: "nope",
+    });
     expect(result.success).toBe(false);
   });
 });
