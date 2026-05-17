@@ -36,9 +36,14 @@ function makeTestApp(): Hono {
 }
 
 describe("error envelope (ADR-0007 §2) — 404 against the real Worker", () => {
-  it("404 UNKNOWN_VAULT — /v1/vault/:vaultId returns the canonical envelope", async () => {
+  it("404 UNKNOWN_VAULT — unimplemented per-vault subroute returns the canonical envelope", async () => {
+    // Events GET/POST are wired (issue #26); other per-vault routes
+    // (`/devices`, `/pair`, `/schedule-deletion`) are still skeleton-404s
+    // pending issues #27/#28/#29. We exercise one of those here to keep the
+    // "vault path → UNKNOWN_VAULT" envelope coverage independent of the
+    // events endpoint's per-request auth behaviour.
     const response = await SELF.fetch(
-      "https://relay.example.com/v1/vault/abcdef0123456789abcdef0123456789/events",
+      "https://relay.example.com/v1/vault/abcdef0123456789abcdef0123456789/devices",
     );
     expect(response.status).toBe(404);
     expect(response.headers.get("Content-Type")).toContain("application/json");

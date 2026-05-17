@@ -41,6 +41,11 @@ export class RelayError extends Error {
   readonly status: number;
   readonly category: string;
   readonly headers: Record<string, string>;
+  // ADR-0007 §2 optional context object. Today only DUPLICATE_CLIENT_NONCE
+  // populates this (`{ eventIndex }`); future endpoints may carry whatever
+  // shape is useful. The error-envelope middleware copies this verbatim into
+  // the response body.
+  details?: Record<string, unknown>;
 
   constructor(code: ErrorCode, message?: string, headers: Record<string, string> = {}) {
     super(message ?? code);
@@ -49,6 +54,13 @@ export class RelayError extends Error {
     this.status = statusForCode(code);
     this.category = categoryForCode(code);
     this.headers = headers;
+  }
+
+  // Fluent setter so the call-site reads `throw new RelayError(...).withDetails(...)`
+  // without having to mutate-then-throw. Returns `this` so it composes inline.
+  withDetails(details: Record<string, unknown>): this {
+    this.details = details;
+    return this;
   }
 }
 

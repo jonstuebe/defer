@@ -21,19 +21,40 @@ interface EnvelopeBody {
   error: string;
   code: ErrorCode;
   requestId: string;
+  details?: Record<string, unknown>;
 }
 
-function buildEnvelope(code: ErrorCode, requestId: string): EnvelopeBody {
-  return {
+function buildEnvelope(
+  code: ErrorCode,
+  requestId: string,
+  details?: Record<string, unknown>,
+): EnvelopeBody {
+  const body: EnvelopeBody = {
     error: categoryForCode(code),
     code,
     requestId,
   };
+  if (details !== undefined) {
+    body.details = details;
+  }
+  return body;
 }
 
-function classify(err: unknown): { code: ErrorCode; extraHeaders: Record<string, string> } {
+function classify(err: unknown): {
+  code: ErrorCode;
+  extraHeaders: Record<string, string>;
+  details?: Record<string, unknown>;
+} {
   if (err instanceof RelayError) {
-    return { code: err.code, extraHeaders: err.headers };
+    const out: {
+      code: ErrorCode;
+      extraHeaders: Record<string, string>;
+      details?: Record<string, unknown>;
+    } = { code: err.code, extraHeaders: err.headers };
+    if (err.details !== undefined) {
+      out.details = err.details;
+    }
+    return out;
   }
   if (err instanceof ZodError) {
     return { code: "SCHEMA_VIOLATION", extraHeaders: {} };
@@ -45,7 +66,7 @@ export const errorEnvelope = (): ErrorHandler => (err, c: Context) => {
   const requestId =
     (c.get("requestId") as string | undefined) ?? "00000000-0000-7000-8000-000000000000";
 
-  const { code, extraHeaders } = classify(err);
+  const { code, extraHeaders, details } = classify(err);
   if (code === "INTERNAL_ERROR") {
     // eslint-disable-next-line no-console
     console.error(
@@ -59,7 +80,7 @@ export const errorEnvelope = (): ErrorHandler => (err, c: Context) => {
   }
 
   const status = statusForCode(code);
-  const body = buildEnvelope(code, requestId);
+  const body = buildEnvelope(code, requestId, details);
 
   for (const [name, value] of Object.entries(extraHeaders)) {
     c.header(name, value);

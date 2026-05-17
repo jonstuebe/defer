@@ -1,3 +1,4 @@
+import type { Context } from "hono";
 import { Hono } from "hono";
 
 import type { Env } from "./env.js";
@@ -13,6 +14,98 @@ type Variables = {
 };
 
 const VERSION = "0.0.0";
+
+// Vault IDs are short opaque strings on the wire (16-byte HKDF output from
+// ADR-0003, typically rendered as 32 hex chars or 22 base64url chars). The
+// Worker route accepts any non-empty string and uses it as the DO name. The
+// only validation the relay does is the schema check on the request body —
+// vault IDs themselves are not parsed at the relay (the unguessable HKDF
+// output is the auth signal, per ADR-0007 §1).
+function getVaultStub(env: Env, vaultId: string) {
+  const id = env.VAULT_RELAY.idFromName(vaultId);
+  return env.VAULT_RELAY.get(id);
+}
+
+// Forwarding the per-vault HTTP request to the DO. The DO sees a path
+// stripped of the `/v1/vault/:vaultId` prefix so it can match on `/events`
+// directly. We preserve method, headers (including `Authorization`), and
+// body — the DO trusts the Worker to deliver these unchanged. The response
+// flows back verbatim except for error envelopes, where the DO can't know
+// the per-request `requestId`; we patch the placeholder here.
+async function forwardToDurableObject(
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+  vaultId: string,
+): Promise<Response> {
+  const stub = getVaultStub(c.env, vaultId);
+
+  // Re-issue the request against a synthetic URL the DO's switch matches on.
+  // We MUST forward the original body (POST events) and `Authorization`
+  // header, plus the query string so `?since=` survives.
+  //
+  // Reading the body as an ArrayBuffer first (rather than streaming) buys
+  // type-system compatibility with `stub.fetch`'s Cloudflare-typed Request:
+  // a `Uint8Array` body satisfies the BodyInit type on both standard and
+  // CF Request constructors. The cost (one extra in-memory copy of the
+  // batch) is negligible at our scale — batches cap at 100 events × ~500
+  // bytes each, well under any meaningful budget.
+  const original = c.req.raw;
+  const incomingUrl = new URL(original.url);
+  const innerUrl = new URL(`https://do.invalid/events`);
+  innerUrl.search = incomingUrl.search;
+
+  const hasBody = original.method !== "GET" && original.method !== "HEAD";
+  const bodyBytes = hasBody ? new Uint8Array(await original.arrayBuffer()) : null;
+  // The CF Workers Types ship their own `Request`/`RequestInit` types that
+  // collide with the lib-DOM ones on `exactOptionalPropertyTypes`. Passing
+  // `(url, init)` to `stub.fetch` rather than a constructed `Request` skips
+  // the cross-type collision; the stub treats the first arg as a `RequestInfo`
+  // (URL string) and the second as its own init type. Cast through `unknown`
+  // because the global `RequestInit` and CF's `RequestInit` differ in their
+  // optional-property nullability, not their runtime shape.
+  const init = {
+    method: original.method,
+    headers: original.headers,
+    body: bodyBytes,
+  } as unknown as RequestInit;
+  const doResponse = (await stub.fetch(
+    innerUrl.toString(),
+    init as Parameters<typeof stub.fetch>[1],
+  )) as unknown as Response;
+
+  // 2xx — pass straight through, with the per-request id stamped so client
+  // logs can correlate against the relay's request-id middleware output.
+  // 4xx/5xx — patch the placeholder requestId the DO stamped in the JSON body.
+  const id = c.get("requestId");
+  if (doResponse.status >= 200 && doResponse.status < 300) {
+    // Reading the body eagerly avoids the `ReadableStream` typing collision
+    // between the lib-DOM and CF stream types — for our payloads (capped at
+    // 100 events × ~500 bytes) the in-memory cost is negligible.
+    const buf = await doResponse.arrayBuffer();
+    const out = new Response(buf, {
+      status: doResponse.status,
+      headers: new Headers(doResponse.headers as unknown as HeadersInit),
+    });
+    out.headers.set("X-Request-Id", id);
+    return out;
+  }
+
+  // Error path. The DO serialised an envelope with a sentinel requestId; we
+  // parse, rewrite, and re-serialise. If the parse fails (shouldn't), the
+  // outer onError middleware catches the JSON.parse throw.
+  const bodyText = await doResponse.text();
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(bodyText) as Record<string, unknown>;
+  } catch {
+    body = { error: "internal_error", code: "INTERNAL_ERROR" };
+  }
+  body.requestId = id;
+
+  const headers = new Headers(doResponse.headers as unknown as HeadersInit);
+  headers.set("Content-Type", "application/json");
+  headers.set("X-Request-Id", id);
+  return new Response(JSON.stringify(body), { status: doResponse.status, headers });
+}
 
 export function createApp(env: Env): Hono<{ Bindings: Env; Variables: Variables }> {
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -41,9 +134,16 @@ export function createApp(env: Env): Hono<{ Bindings: Env; Variables: Variables 
     }),
   );
 
-  // Skeleton vault-routes. The only thing this slice does is return the
-  // correct 404 shape for `/v1/vault/:vaultId/*` (UNKNOWN_VAULT). DO routing
-  // and the actual endpoints land with issues #26+.
+  // Event-log endpoints (issue #26). Both forward to the per-vault DO; the
+  // DO runs the actual auth + tombstone + replay-check logic. Keeping these
+  // as thin forwarders here means future per-route concerns (rate limiting in
+  // #32, observability hooks) can live in the Worker tier without touching
+  // the DO.
+  app.post("/v1/vault/:vaultId/events", (c) => forwardToDurableObject(c, c.req.param("vaultId")));
+  app.get("/v1/vault/:vaultId/events", (c) => forwardToDurableObject(c, c.req.param("vaultId")));
+
+  // Remaining skeleton vault-routes (devices, pair, schedule-deletion, ...)
+  // land in #27, #28, #29. Until then they 404 with the canonical envelope.
   app.all("/v1/vault/:vaultId", () => {
     throw unknownVault();
   });
@@ -56,7 +156,7 @@ export function createApp(env: Env): Hono<{ Bindings: Env; Variables: Variables 
   // paths SHOULD be treated as misconfigured clients. We emit a plain 404
   // with the envelope shape but using `UNKNOWN_VAULT` (the closest match) so
   // the response still parses against `ErrorEnvelopeSchema` at the client
-  // boundary. Issue #26+ replaces this with route-specific handlers.
+  // boundary.
   app.notFound((c) => {
     const id = c.get("requestId");
     c.header("X-Request-Id", id);
