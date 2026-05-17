@@ -69,6 +69,39 @@ pnpm -F @defer/relay test        # vitest under @cloudflare/vitest-pool-workers
 Deploy automation lives in issue #33; the deploy button + production rollout
 are out of scope for this slice.
 
+## Device management
+
+The per-vault device-auth-token list lives inside the `VaultRelay` DO,
+alongside the event log. Two endpoints (issue #27):
+
+- **`POST /v1/vault/:vaultId/devices`** — body `{ deviceId, deviceAuthToken }`.
+  Authed by an existing valid bearer for the vault. Adds the new
+  `deviceAuthToken` to the per-vault valid-tokens set and records the
+  `deviceId → deviceAuthToken` mapping. This is the existing-device side of
+  the pairing handshake: the already-paired device sponsors the new one.
+  Duplicate `deviceId` → `409 DEVICE_ALREADY_REGISTERED`.
+- **`DELETE /v1/vault/:vaultId/devices/:deviceId`** — authed by any valid
+  bearer for the vault, **including** the token belonging to the device being
+  revoked (self-revoke). Removes both the token and the `deviceId` mapping;
+  subsequent requests carrying that token return `401 INVALID_TOKEN`.
+
+The bootstrap path (`POST /v1/vault/:vaultId/events` against a previously
+unknown `vaultId`, ADR-0007 §1) registers the bearer as the first device-
+auth-token and captures the **first event's** `envelope.deviceId` as the
+owning deviceId. Subsequent events in the same batch may carry other
+deviceIds; those do NOT auto-register — they need an explicit `POST /devices`
+to gain their own tokens.
+
+### Last-device revoke
+
+Revoking the last remaining device for a vault is allowed and intentional.
+After the last token is revoked, the vault becomes unreachable until a new
+device is restored — and pairing requires an existing device's token to seal
+the payload, so a fresh device can only re-enter the vault via the recovery
+mnemonic (ADR-0003). The Durable Object is NOT destroyed by this flow; only
+the deletion-alarm path (issue #30) tombstones storage. The DO is therefore
+recoverable as long as the user holds the recovery mnemonic.
+
 ## ADR cross-refs
 
 - [ADR-0001](../../docs/adr/0001-local-first-blind-cloudflare-relay.md) —
