@@ -1,12 +1,18 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
+import {
+  MAX_SEALED_PAYLOAD_BYTES,
+  PAIRING_TOKEN_REGEX,
+  PutPairingRequestSchema,
+} from "@defer/core/relay-protocol";
 
 import type { Env } from "./env.js";
 import { cors } from "./middleware/cors.js";
 import { errorEnvelope } from "./middleware/error-envelope.js";
 import { logging } from "./middleware/logging.js";
 import { requestId } from "./middleware/request-id.js";
-import { schemaViolation, unknownVault } from "./errors.js";
+import { PairingTokenStore } from "./pairing-token-store.js";
+import { schemaViolation, unknownPairingToken, unknownVault } from "./errors.js";
 
 // `vaultId` on the wire is the 22-char base64url encoding of a 16-byte HKDF
 // output (ADR-0003 §"vault id derivation"). The closed regex matches the same
@@ -22,6 +28,29 @@ function validateVaultId(raw: string): string {
     throw schemaViolation("vaultId path param must be 22 base64url chars (16 bytes, no padding)");
   }
   return raw;
+}
+
+// Pairing tokens share the same 22-char base64url shape as vault IDs (16
+// bytes encoded URL-safely, no padding). Validating at the router boundary
+// keeps malformed input from ever reaching KV and produces SCHEMA_VIOLATION
+// before any Zod parse on the body — see ADR-0003 §"pairing handshake" for
+// the token's role and ADR-0007 §2 for the error envelope.
+function validatePairingToken(raw: string): string {
+  if (!PAIRING_TOKEN_REGEX.test(raw)) {
+    throw schemaViolation(
+      "pairingToken path param must be 22 base64url chars (16 bytes, no padding)",
+    );
+  }
+  return raw;
+}
+
+// Decoded byte length of a standard-base64 string, no allocation. The Zod
+// schema already verified the charset is `[A-Za-z0-9+/=]+`; the formula is
+// the canonical "ceil to multiple of 4, subtract padding" but since the
+// regex permits up to two `=` we just count.
+function decodedBase64Length(s: string): number {
+  const padCount = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
+  return Math.floor((s.length * 3) / 4) - padCount;
 }
 
 // Hono context variables surfaced by the middleware chain.
@@ -182,8 +211,65 @@ export function createApp(env: Env): Hono<{ Bindings: Env; Variables: Variables 
     ),
   );
 
-  // Remaining skeleton vault-routes (pair, schedule-deletion, ...)
-  // land in #28, #29. Until then they 404 with the canonical envelope.
+  // Pairing handshake (issue #28). Both endpoints are UNAUTHENTICATED — the
+  // unguessable 16-byte pairing token is the only access signal, and the
+  // relay never sees plaintext (the sealed blob is opaque base64). Any
+  // `Authorization` header on these routes is ignored. See ADR-0003
+  // §"pairing handshake" + ADR-0007 §1.
+  //
+  // PUT: parse + schema-check the body, enforce the decoded-byte cap, then
+  // hand the raw base64 string to KV with a 60s TTL. Returns 204 with no
+  // body. Re-PUTs with the same token overwrite the entry and reset the
+  // TTL — the spec doesn't require 409 idempotency here (see
+  // `pairing-token-store.ts` for the rationale).
+  app.post("/v1/pairing", async (c) => {
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      throw schemaViolation("body must be valid JSON");
+    }
+    const parsed = PutPairingRequestSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw schemaViolation("invalid pairing request body");
+    }
+    const { pairingToken, sealedPayload } = parsed.data;
+
+    // Decoded-byte cap. The Zod regex confirmed the wire charset; here we
+    // gate on the actual payload size. ADR-0001 §"blind relay" caps payloads
+    // to prevent the unauthenticated PUT being abused as a blob store.
+    if (decodedBase64Length(sealedPayload) > MAX_SEALED_PAYLOAD_BYTES) {
+      throw schemaViolation(
+        `sealedPayload exceeds ${MAX_SEALED_PAYLOAD_BYTES.toString()}-byte cap`,
+      );
+    }
+
+    const store = new PairingTokenStore(c.env.PAIRING_TOKENS);
+    await store.put(pairingToken, sealedPayload);
+
+    // 204 No Content — issue #28 spec. Headers (X-Request-Id, CORS) are
+    // applied by middleware.
+    return c.body(null, 204);
+  });
+
+  // GET: validate path-param shape, look up in KV, 200 with `{ sealedPayload }`
+  // or 404 UNKNOWN_PAIRING_TOKEN. Repeatable within the 60s window — KV TTL
+  // is the only retention bound (we do NOT delete on read; the PRD says the
+  // new device "polls for ≤60s"). ADR-0007 §2: expired tokens surface as
+  // UNKNOWN_PAIRING_TOKEN (not EXPIRED_PAIRING_TOKEN, which is reserved for
+  // forward-compat).
+  app.get("/v1/pairing/:token", async (c) => {
+    const token = validatePairingToken(c.req.param("token"));
+    const store = new PairingTokenStore(c.env.PAIRING_TOKENS);
+    const sealedPayload = await store.get(token);
+    if (sealedPayload === null) {
+      throw unknownPairingToken();
+    }
+    return c.json({ sealedPayload });
+  });
+
+  // Remaining skeleton vault-routes (schedule-deletion, ...) land in #29.
+  // Until then they 404 with the canonical envelope.
   app.all("/v1/vault/:vaultId", () => {
     throw unknownVault();
   });
