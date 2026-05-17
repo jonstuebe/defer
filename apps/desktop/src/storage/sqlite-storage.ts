@@ -66,6 +66,14 @@ export class SqliteStorage implements StoragePort {
     }));
   }
 
+  async stampEventSeq(deviceId: string, clientNonce: string, seq: number): Promise<void> {
+    this.#db.run(`UPDATE events SET seq = ? WHERE device_id = ? AND client_nonce = ?;`, [
+      seq,
+      deviceId,
+      clientNonce,
+    ]);
+  }
+
   async putItem(item: Item): Promise<void> {
     this.#db.run(
       `INSERT INTO items(id, url, canonical_url, title, state, liked, tags_json, saved_at, created_at, deleted_at)
