@@ -13,6 +13,7 @@ type SettingsProps = {
   currentDeviceId: string;
   onClose: () => void;
   onPairNewDevice: () => void;
+  onSignOutThisDevice: () => void;
 };
 
 /**
@@ -34,6 +35,7 @@ export function Settings({
   currentDeviceId,
   onClose,
   onPairNewDevice,
+  onSignOutThisDevice,
 }: SettingsProps) {
   const devices = useProjectionDevices(projection);
   const [relayBaseUrl, setRelayBaseUrlState] = useState<string | null>(null);
@@ -106,18 +108,16 @@ export function Settings({
                       {record.type} · registered {formatRegisteredAt(record.registeredAt)}
                     </span>
                   </div>
-                  {isCurrent ? (
-                    <span className="muted" style={{ fontSize: 12 }}>
-                      Sign-out ships in slice #58
-                    </span>
-                  ) : (
-                    <button
-                      className="secondary"
-                      onClick={() => void commands.revokeDevice(deviceId)}
-                    >
-                      Remove this device
-                    </button>
-                  )}
+                  <button
+                    className="secondary"
+                    style={isCurrent ? { color: "var(--danger)" } : undefined}
+                    onClick={() => {
+                      if (isCurrent) onSignOutThisDevice();
+                      else void commands.revokeDevice(deviceId);
+                    }}
+                  >
+                    Remove this device
+                  </button>
                 </li>
               );
             })}

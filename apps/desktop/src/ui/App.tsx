@@ -28,7 +28,9 @@ import { MainView } from "./MainView.js";
 import { RestoreFlow } from "./RestoreFlow.js";
 import { Settings } from "./Settings.js";
 import { PairDevice } from "./PairDevice.js";
+import { SignOutConfirm } from "./SignOutConfirm.js";
 import { executePairing } from "../vault/pairing-existing-device.js";
+import { signOutThisDevice } from "../vault/sign-out.js";
 import { restoreFromMnemonic } from "../onboarding/restore-vault.js";
 
 type Screen =
@@ -40,7 +42,8 @@ type Screen =
   | { name: "empty-inbox" }
   | { name: "inbox" }
   | { name: "settings" }
-  | { name: "pair-device" };
+  | { name: "pair-device" }
+  | { name: "sign-out-confirm" };
 
 type AppProps = {
   storage: StoragePort;
@@ -165,6 +168,30 @@ export function App({ storage }: AppProps) {
         currentDeviceId={loaded.commands.getDeviceId()}
         onClose={() => setScreen({ name: "inbox" })}
         onPairNewDevice={() => setScreen({ name: "pair-device" })}
+        onSignOutThisDevice={() => setScreen({ name: "sign-out-confirm" })}
+      />
+    );
+  }
+  if (screen.name === "sign-out-confirm") {
+    const loaded = services;
+    const devices = loaded.projection.getState().devices;
+    const isLastDevice = devices.size <= 1;
+    return (
+      <SignOutConfirm
+        isLastDevice={isLastDevice}
+        onCancel={() => setScreen({ name: "settings" })}
+        onConfirm={async () => {
+          const baseUrl = await getRelayBaseUrl(storage);
+          await signOutThisDevice({
+            storage,
+            commands: loaded.commands,
+            relayBaseUrl: baseUrl,
+            currentDeviceId: loaded.commands.getDeviceId(),
+          });
+          loaded.inbound.stop();
+          setServices(null);
+          setScreen({ name: "welcome" });
+        }}
       />
     );
   }
