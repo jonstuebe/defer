@@ -1,13 +1,17 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
-import { type Event, EventSchema, type PendingEvent } from "@defer/core";
+import { type Event, EventSchema, type PendingEvent, RELAY_DEVICE_ID } from "@defer/core";
 import {
+  CancelDeletionRequestSchema,
   MAX_PAGE_SIZE,
   PushEventsRequestSchema,
   RegisterDeviceRequestSchema,
+  ScheduleDeletionRequestSchema,
+  type CancelDeletionResponse,
   type PushEventsResponse,
   type PullEventsResponse,
   type RegisterDeviceResponse,
   type RevokeDeviceResponse,
+  type ScheduleDeletionResponse,
 } from "@defer/core/relay-protocol";
 
 import { requireBearerToken } from "./auth.js";
@@ -35,6 +39,16 @@ import { RelayError } from "./errors.js";
 //                                            scans return events in `seq` order without
 //                                            a JS-side sort.
 //   nonce:<deviceId>:<cn>  number          — the assigned seq; replay-protection index
+//   meta:pendingVaultDeleted PendingVaultDeleted
+//                                          — the pre-signed VaultDeleted envelope handed in
+//                                            by the scheduling device (ADR-0006 §5). Set on
+//                                            `POST /schedule-deletion`, deleted on
+//                                            `POST /cancel-deletion`. Issue #30's alarm
+//                                            reads this blob and re-emits it verbatim with
+//                                            an assigned `seq`.
+//   meta:scheduledFor      number          — ms timestamp mirror of `pendingVaultDeleted`'s
+//                                            scheduledFor, kept as a separate scalar for
+//                                            cheap in-DO "already scheduled?" checks.
 //
 // `deviceId` is base64url per the envelope schema (no `:` collision risk); the
 // composite key is therefore safe to delimit with `:`.
@@ -42,11 +56,23 @@ import { RelayError } from "./errors.js";
 const KEY_NEXT_SEQ = "meta:nextSeq";
 const KEY_INITIALIZED = "meta:initialized";
 const KEY_TOMBSTONE = "meta:tombstone";
+const KEY_PENDING_VAULT_DELETED = "meta:pendingVaultDeleted";
+const KEY_SCHEDULED_FOR = "meta:scheduledFor";
 const TOKEN_PREFIX = "token:";
 const DEVICE_PREFIX = "device:";
 const EVENT_PREFIX = "event:";
 const NONCE_PREFIX = "nonce:";
 const SEQ_PAD_WIDTH = 16;
+
+/**
+ * Tolerance (ms) for `scheduledFor` in the past on `POST /schedule-deletion`.
+ * Clients may have slightly fast clocks; rejecting anything in the past would
+ * make a healthy client occasionally fail to schedule. 5 minutes is generous
+ * enough to absorb realistic clock skew and small enough that a true replay
+ * (a re-POST of a sniffed schedule from hours ago) still rejects.
+ * Documented in `apps/relay/README.md` §"Vault deletion".
+ */
+const SCHEDULE_DELETION_SKEW_MS = 5 * 60 * 1000;
 
 function eventKey(seq: number): string {
   return `${EVENT_PREFIX}${seq.toString().padStart(SEQ_PAD_WIDTH, "0")}`;
@@ -119,6 +145,14 @@ export class VaultRelay {
       if (path.startsWith("/devices/") && method === "DELETE") {
         const rawId = path.slice("/devices/".length);
         return await this.#handleRevokeDevice(request, decodeURIComponent(rawId));
+      }
+      // Deletion control plane (issue #29). The data plane (alarm fire +
+      // `VaultDeleted` emission) lives in #30.
+      if (path === "/schedule-deletion" && method === "POST") {
+        return await this.#handleScheduleDeletion(request);
+      }
+      if (path === "/cancel-deletion" && method === "POST") {
+        return await this.#handleCancelDeletion(request);
       }
 
       // Anything else against an initialized DO is a router bug — the Worker
@@ -406,6 +440,199 @@ export class VaultRelay {
     await this.#state.storage.delete([tokenKey(ownerToken), deviceKey(deviceId)]);
 
     const responseBody: RevokeDeviceResponse = { ok: true };
+    return this.#json(200, responseBody);
+  }
+
+  // --- POST /schedule-deletion --------------------------------------------
+
+  // Control-plane arm: persist the signed `VaultDeletionScheduled` on the
+  // event log, stow the pre-signed `VaultDeleted` blob in DO storage (ADR-0006
+  // §5), and arm a DO alarm for `scheduledFor`. The alarm handler itself is a
+  // no-op skeleton until issue #30 lands the data-plane wipe.
+  async #handleScheduleDeletion(request: Request): Promise<Response> {
+    const token = requireBearerToken(request);
+
+    // 410 short-circuits everything else, per ADR-0007 §1.
+    const tombstoned = await this.#isTombstoned();
+    if (tombstoned) {
+      throw new RelayError("VAULT_DELETED");
+    }
+
+    // 404 on uninitialized vault — no first-write self-registration on this
+    // endpoint (ADR-0007 §1 table).
+    const initialized = await this.#isInitialized();
+    if (!initialized) {
+      throw new RelayError("UNKNOWN_VAULT");
+    }
+
+    const known = await this.#state.storage.get<TokenRecord>(tokenKey(token));
+    if (known === undefined) {
+      throw new RelayError("INVALID_TOKEN");
+    }
+
+    const body = (await request.json().catch(() => {
+      throw new RelayError("SCHEMA_VIOLATION", "request body is not valid JSON");
+    })) as unknown;
+    const parsed = ScheduleDeletionRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new RelayError("SCHEMA_VIOLATION", "request body failed schema validation");
+    }
+    const { scheduled, deleted } = parsed.data;
+
+    // ADR-0006 §5: `deletedAt` MUST equal `scheduledFor`. The relay enforces
+    // this because the alarm re-emits `deleted` verbatim; if the two diverged
+    // the client would display a `deletedAt` that the user never authorised.
+    if (scheduled.data.scheduledFor !== deleted.data.deletedAt) {
+      throw new RelayError(
+        "SCHEMA_VIOLATION",
+        "deleted.deletedAt must equal scheduled.scheduledFor",
+      ).withDetails({ reason: "deletedAt_mismatch" });
+    }
+
+    // ADR-0006 §5: the pre-signed `VaultDeleted` envelope uses the
+    // `RELAY_DEVICE_ID` sentinel because the alarm — not a paired device —
+    // is what re-emits it. A non-sentinel `deviceId` here means the client
+    // pre-signed a payload that would attribute the deletion to a real
+    // device, which violates the convention.
+    if (deleted.deviceId !== RELAY_DEVICE_ID) {
+      throw new RelayError(
+        "SCHEMA_VIOLATION",
+        `deleted.deviceId must be the relay sentinel`,
+      ).withDetails({ reason: "deleted_deviceId_not_relay" });
+    }
+
+    // Past-time check with a small tolerance for client clock skew. A schedule
+    // posted with a scheduledFor older than (now - skew) is most likely a
+    // replay of a sniffed earlier request and is rejected — even though the
+    // signature on the envelope is genuine, re-arming with an old timestamp
+    // would mean the alarm could fire immediately on a vault the user had no
+    // intention of deleting right now.
+    const now = Date.now();
+    if (scheduled.data.scheduledFor <= now - SCHEDULE_DELETION_SKEW_MS) {
+      throw new RelayError(
+        "SCHEMA_VIOLATION",
+        "scheduledFor is in the past (beyond clock-skew tolerance)",
+      ).withDetails({ reason: "scheduled_in_past" });
+    }
+
+    // Already-scheduled check. ADR-0006 §5 allows reschedule only via
+    // cancel-then-reschedule; back-to-back schedule without an intervening
+    // cancel is 409 so a malicious replay can't silently overwrite the
+    // pending blob.
+    const existingScheduledFor = await this.#state.storage.get<number>(KEY_SCHEDULED_FOR);
+    if (existingScheduledFor !== undefined) {
+      throw new RelayError("DELETION_ALREADY_SCHEDULED");
+    }
+
+    // Append the `scheduled` envelope to the event log with the next seq.
+    // We also register the envelope's `clientNonce` in the nonce keyspace so a
+    // later malicious replay of the same envelope via `POST /events` would
+    // 409 with `DUPLICATE_CLIENT_NONCE` — keeping the replay-protection
+    // surface uniform across all event-log writers.
+    const nextSeqStored = (await this.#state.storage.get<number>(KEY_NEXT_SEQ)) ?? 1;
+    const scheduledNonceKey = nonceKey(scheduled.deviceId, scheduled.clientNonce);
+
+    // Defence-in-depth: if the scheduling envelope's nonce happens to already
+    // be in storage (e.g. a malicious replay that sneaked through `POST /events`
+    // first), reject with 409. Cleaner than silently overwriting.
+    const existingNonce = await this.#state.storage.get<number>(scheduledNonceKey);
+    if (existingNonce !== undefined) {
+      throw new RelayError(
+        "DUPLICATE_CLIENT_NONCE",
+        "scheduled envelope's (deviceId, clientNonce) already accepted",
+      );
+    }
+
+    const scheduledSeq = nextSeqStored;
+    const stamped: Event = stampSeq(scheduled, scheduledSeq);
+
+    await this.#state.storage.put({
+      [eventKey(scheduledSeq)]: stamped,
+      [scheduledNonceKey]: scheduledSeq,
+      [KEY_NEXT_SEQ]: nextSeqStored + 1,
+      [KEY_PENDING_VAULT_DELETED]: deleted,
+      [KEY_SCHEDULED_FOR]: scheduled.data.scheduledFor,
+    });
+
+    // Arm the DO alarm. The alarm handler is a no-op skeleton in this PR;
+    // #30 wires it up to emit `VaultDeleted` and tombstone the DO.
+    await this.#state.storage.setAlarm(scheduled.data.scheduledFor);
+
+    const responseBody: ScheduleDeletionResponse = {
+      scheduledFor: scheduled.data.scheduledFor,
+      assignedSeq: scheduledSeq,
+    };
+    return this.#json(200, responseBody);
+  }
+
+  // --- POST /cancel-deletion ----------------------------------------------
+
+  // Control-plane disarm: append the signed `VaultDeletionCancelled` to the
+  // event log, drop the stored pre-signed `VaultDeleted` blob (ADR-0006 §5),
+  // and cancel the DO alarm.
+  async #handleCancelDeletion(request: Request): Promise<Response> {
+    const token = requireBearerToken(request);
+
+    const tombstoned = await this.#isTombstoned();
+    if (tombstoned) {
+      throw new RelayError("VAULT_DELETED");
+    }
+
+    const initialized = await this.#isInitialized();
+    if (!initialized) {
+      throw new RelayError("UNKNOWN_VAULT");
+    }
+
+    const known = await this.#state.storage.get<TokenRecord>(tokenKey(token));
+    if (known === undefined) {
+      throw new RelayError("INVALID_TOKEN");
+    }
+
+    const body = (await request.json().catch(() => {
+      throw new RelayError("SCHEMA_VIOLATION", "request body is not valid JSON");
+    })) as unknown;
+    const parsed = CancelDeletionRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new RelayError("SCHEMA_VIOLATION", "request body failed schema validation");
+    }
+    const { cancelled } = parsed.data;
+
+    // Nothing-to-cancel check. ADR-0007 §2 introduces NO_PENDING_DELETION as
+    // a new 409 code for exactly this case — distinct from
+    // DELETION_ALREADY_SCHEDULED so clients can tell the two state errors
+    // apart in a unified retry policy.
+    const existingPending = await this.#state.storage.get<unknown>(KEY_PENDING_VAULT_DELETED);
+    if (existingPending === undefined) {
+      throw new RelayError("NO_PENDING_DELETION");
+    }
+
+    const cancelledNonceKey = nonceKey(cancelled.deviceId, cancelled.clientNonce);
+    const existingNonce = await this.#state.storage.get<number>(cancelledNonceKey);
+    if (existingNonce !== undefined) {
+      throw new RelayError(
+        "DUPLICATE_CLIENT_NONCE",
+        "cancelled envelope's (deviceId, clientNonce) already accepted",
+      );
+    }
+
+    const nextSeqStored = (await this.#state.storage.get<number>(KEY_NEXT_SEQ)) ?? 1;
+    const cancelledSeq = nextSeqStored;
+    const stamped: Event = stampSeq(cancelled, cancelledSeq);
+
+    // Multi-key write: append the cancelled event, update nextSeq, register
+    // the nonce, and DELETE the pending-vault-deleted markers all in one go.
+    // DO storage applies multi-key puts atomically; the `delete()` calls run
+    // separately but the DO's single-threaded request loop means no other
+    // request can observe a half-cancelled state.
+    await this.#state.storage.put({
+      [eventKey(cancelledSeq)]: stamped,
+      [cancelledNonceKey]: cancelledSeq,
+      [KEY_NEXT_SEQ]: nextSeqStored + 1,
+    });
+    await this.#state.storage.delete([KEY_PENDING_VAULT_DELETED, KEY_SCHEDULED_FOR]);
+    await this.#state.storage.deleteAlarm();
+
+    const responseBody: CancelDeletionResponse = { assignedSeq: cancelledSeq };
     return this.#json(200, responseBody);
   }
 

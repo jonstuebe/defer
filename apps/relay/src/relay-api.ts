@@ -268,7 +268,18 @@ export function createApp(env: Env): Hono<{ Bindings: Env; Variables: Variables 
     return c.json({ sealedPayload });
   });
 
-  // Remaining skeleton vault-routes (schedule-deletion, ...) land in #29.
+  // Vault deletion control plane (issue #29). Same forwarder pattern as the
+  // event-log and device-list endpoints — the DO runs the actual auth,
+  // tombstone, replay, and equality checks. The data plane (alarm fire +
+  // `VaultDeleted` emission + `deleteAll()` tombstone) lives in #30.
+  app.post("/v1/vault/:vaultId/schedule-deletion", (c) =>
+    forwardToDurableObject(c, validateVaultId(c.req.param("vaultId")), "/schedule-deletion"),
+  );
+  app.post("/v1/vault/:vaultId/cancel-deletion", (c) =>
+    forwardToDurableObject(c, validateVaultId(c.req.param("vaultId")), "/cancel-deletion"),
+  );
+
+  // Remaining skeleton vault-routes (pair, ...) land in subsequent slices.
   // Until then they 404 with the canonical envelope.
   app.all("/v1/vault/:vaultId", () => {
     throw unknownVault();

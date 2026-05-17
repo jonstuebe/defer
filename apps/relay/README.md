@@ -102,6 +102,45 @@ mnemonic (ADR-0003). The Durable Object is NOT destroyed by this flow; only
 the deletion-alarm path (issue #30) tombstones storage. The DO is therefore
 recoverable as long as the user holds the recovery mnemonic.
 
+## Vault deletion
+
+Vault deletion is a 48-hour-delayed wipe (ADR-0005) split across two slices:
+a **control plane** (issue #29) that arms and disarms the countdown, and a
+**data plane** (issue #30, not yet shipped) that fires the alarm and emits
+the `VaultDeleted` event.
+
+The control plane lives behind two endpoints, both authed by any valid bearer
+for the vault:
+
+- **`POST /v1/vault/:vaultId/schedule-deletion`** — body
+  `{ scheduled, deleted }`. `scheduled` is the signed
+  `VaultDeletionScheduled` envelope (with seq omitted); `deleted` is the
+  pre-signed `VaultDeleted` envelope (ADR-0006 §5: `deletedAt === scheduledFor`
+  and `deviceId === RELAY_DEVICE_ID`). The relay appends `scheduled` to the
+  event log (assigning the next `seq`), stows `deleted` in DO storage at
+  `meta:pendingVaultDeleted`, and sets a DO alarm for `scheduledFor`. The
+  alarm handler is a no-op skeleton until #30 lands.
+- **`POST /v1/vault/:vaultId/cancel-deletion`** — body `{ cancelled }`. The
+  relay appends the signed `VaultDeletionCancelled` to the event log, deletes
+  the stored pre-signed `VaultDeleted` blob, and cancels the DO alarm. Both
+  events show up on `GET /events` so paired devices can clear the cross-device
+  "deletion scheduled" banner on the next pull.
+
+### Clock-skew tolerance on `scheduledFor`
+
+The relay rejects `scheduledFor` values strictly older than `now - 5min` as
+replay attempts (`422 SCHEMA_VIOLATION` with `details.reason === "scheduled_in_past"`).
+The 5-minute window absorbs realistic client clock skew so a healthy device
+with a slightly fast clock doesn't fail to schedule. A genuine replay of a
+sniffed schedule from hours ago still rejects.
+
+### Status codes
+
+- `409 DELETION_ALREADY_SCHEDULED` — schedule while one is already armed.
+- `409 NO_PENDING_DELETION` — cancel with nothing armed.
+- `422 SCHEMA_VIOLATION` with `details.reason` — `deletedAt_mismatch`,
+  `deleted_deviceId_not_relay`, or `scheduled_in_past`.
+
 ## ADR cross-refs
 
 - [ADR-0001](../../docs/adr/0001-local-first-blind-cloudflare-relay.md) —

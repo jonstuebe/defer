@@ -12,6 +12,7 @@ const ERROR_CATEGORY_FOR_CODE: Record<ErrorCode, string> = {
   UNKNOWN_DEVICE: "not_found",
   UNKNOWN_PAIRING_TOKEN: "not_found",
   DELETION_ALREADY_SCHEDULED: "conflict",
+  NO_PENDING_DELETION: "conflict",
   DUPLICATE_CLIENT_NONCE: "conflict",
   DEVICE_ALREADY_REGISTERED: "conflict",
   VAULT_DELETED: "gone",

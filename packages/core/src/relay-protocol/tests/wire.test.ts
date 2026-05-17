@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CancelDeletionRequestSchema,
+  CancelDeletionResponseSchema,
   GetPairingResponseSchema,
   MAX_BATCH_SIZE,
   MAX_PAGE_SIZE,
@@ -13,7 +15,10 @@ import {
   RegisterDeviceRequestSchema,
   RegisterDeviceResponseSchema,
   RevokeDeviceResponseSchema,
+  ScheduleDeletionRequestSchema,
+  ScheduleDeletionResponseSchema,
 } from "../index.js";
+import { RELAY_DEVICE_ID } from "../../events/envelope.js";
 
 // 22-char base64url placeholder for the 16-byte `clientNonce` (ADR-0006 §4.1).
 const CLIENT_NONCE = "AAAAAAAAAAAAAAAAAAAAAA";
@@ -337,6 +342,158 @@ describe("PutPairingRequestSchema", () => {
       sealedPayload: PAYLOAD,
       extra: "nope",
     });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("ScheduleDeletionRequestSchema", () => {
+  // 43-char base64url signature placeholder (32-byte HMAC-SHA256 unpadded).
+  const SIG = "A".repeat(43);
+  // 22-char base64url clientNonce placeholder.
+  const NONCE_A = "A".repeat(22);
+  const NONCE_B = "B".repeat(22);
+  const DEVICE = "device-abc";
+  const SCHEDULED_FOR = 1_700_000_000_000 + 48 * 60 * 60 * 1000;
+
+  function scheduled(): Record<string, unknown> {
+    return {
+      type: "VaultDeletionScheduled",
+      deviceId: DEVICE,
+      timestamp: 1_700_000_000_000,
+      clientNonce: NONCE_A,
+      signature: SIG,
+      data: { scheduledFor: SCHEDULED_FOR },
+    };
+  }
+  function deleted(): Record<string, unknown> {
+    return {
+      type: "VaultDeleted",
+      deviceId: RELAY_DEVICE_ID,
+      timestamp: 1_700_000_000_000,
+      clientNonce: NONCE_B,
+      signature: SIG,
+      data: { deletedAt: SCHEDULED_FOR },
+    };
+  }
+
+  it("parses a real example", () => {
+    const result = ScheduleDeletionRequestSchema.safeParse({
+      scheduled: scheduled(),
+      deleted: deleted(),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects when `scheduled` is missing", () => {
+    const result = ScheduleDeletionRequestSchema.safeParse({ deleted: deleted() });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects when `deleted` is missing", () => {
+    const result = ScheduleDeletionRequestSchema.safeParse({ scheduled: scheduled() });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects when `scheduled` has a malformed signature", () => {
+    const bad = scheduled();
+    (bad as { signature: string }).signature = "A".repeat(42);
+    const result = ScheduleDeletionRequestSchema.safeParse({
+      scheduled: bad,
+      deleted: deleted(),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects when `deleted` has a malformed signature", () => {
+    const bad = deleted();
+    (bad as { signature: string }).signature = "A".repeat(44);
+    const result = ScheduleDeletionRequestSchema.safeParse({
+      scheduled: scheduled(),
+      deleted: bad,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects when `scheduled` carries a `seq` field (Pending* schemas omit seq)", () => {
+    // Pending schemas use `.omit({ seq: true })` — Zod stripping unknown keys
+    // means a seq-carrying envelope still parses (the key is dropped). This
+    // test pins that behaviour so future schema work doesn't accidentally
+    // tighten it.
+    const withSeq = { ...scheduled(), seq: 7 };
+    const result = ScheduleDeletionRequestSchema.safeParse({
+      scheduled: withSeq,
+      deleted: deleted(),
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("ScheduleDeletionResponseSchema", () => {
+  it("parses a real example", () => {
+    const result = ScheduleDeletionResponseSchema.safeParse({
+      scheduledFor: 1_700_000_000_000,
+      assignedSeq: 5,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects assignedSeq of 0 (must be positive)", () => {
+    const result = ScheduleDeletionResponseSchema.safeParse({
+      scheduledFor: 1_700_000_000_000,
+      assignedSeq: 0,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects negative scheduledFor", () => {
+    const result = ScheduleDeletionResponseSchema.safeParse({
+      scheduledFor: -1,
+      assignedSeq: 1,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("CancelDeletionRequestSchema", () => {
+  const SIG = "A".repeat(43);
+  const NONCE = "C".repeat(22);
+  function cancelled(): Record<string, unknown> {
+    return {
+      type: "VaultDeletionCancelled",
+      deviceId: "device-abc",
+      timestamp: 1_700_000_000_000,
+      clientNonce: NONCE,
+      signature: SIG,
+      data: {},
+    };
+  }
+
+  it("parses a real example", () => {
+    const result = CancelDeletionRequestSchema.safeParse({ cancelled: cancelled() });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects when `cancelled` is missing", () => {
+    const result = CancelDeletionRequestSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a malformed signature", () => {
+    const bad = cancelled();
+    (bad as { signature: string }).signature = "not-base64url";
+    const result = CancelDeletionRequestSchema.safeParse({ cancelled: bad });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("CancelDeletionResponseSchema", () => {
+  it("parses a real example", () => {
+    const result = CancelDeletionResponseSchema.safeParse({ assignedSeq: 3 });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects assignedSeq of 0", () => {
+    const result = CancelDeletionResponseSchema.safeParse({ assignedSeq: 0 });
     expect(result.success).toBe(false);
   });
 });
