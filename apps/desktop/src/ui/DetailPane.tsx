@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import type { Item } from "@defer/core";
 
 import type { VaultCommands } from "../vault/commands.js";
+import { TagEditor } from "./TagEditor.js";
 
 type DetailPaneProps = {
   item: Item | null;
+  allTags: readonly string[];
   commands: VaultCommands;
 };
 
@@ -18,7 +20,7 @@ type DetailPaneProps = {
  * `vaultCommands` API. Delete uses an inline confirm (no modal) per
  * the slice description.
  */
-export function DetailPane({ item, commands }: DetailPaneProps) {
+export function DetailPane({ item, allTags, commands }: DetailPaneProps) {
   if (item === null) {
     return (
       <aside className="layout-detail">
@@ -26,10 +28,18 @@ export function DetailPane({ item, commands }: DetailPaneProps) {
       </aside>
     );
   }
-  return <DetailPaneFor item={item} commands={commands} />;
+  return <DetailPaneFor item={item} allTags={allTags} commands={commands} />;
 }
 
-function DetailPaneFor({ item, commands }: { item: Item; commands: VaultCommands }) {
+function DetailPaneFor({
+  item,
+  allTags,
+  commands,
+}: {
+  item: Item;
+  allTags: readonly string[];
+  commands: VaultCommands;
+}) {
   // The pane gets a fresh key per item (see MainView), so `useState`
   // initializers see the right item. Editing title is local state that
   // commits on blur or ⌘+S; cancelling via Esc reverts.
@@ -124,6 +134,8 @@ function DetailPaneFor({ item, commands }: { item: Item; commands: VaultCommands
             </button>
           )}
         </div>
+
+        <TagEditor itemId={item.id} itemTags={item.tags} allTags={allTags} commands={commands} />
 
         <div className="muted" style={{ fontSize: 12 }}>
           Saved {formatAbsolute(item.savedAt)}

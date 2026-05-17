@@ -140,6 +140,34 @@ export class VaultCommands {
     );
   }
 
+  async tag(itemId: string, tag: string): Promise<void> {
+    const normalized = tag.trim();
+    if (normalized === "") throw new RangeError("VaultCommands.tag: tag must be non-empty");
+    await this.#emit(
+      {
+        type: "ItemTagged",
+        deviceId: this.#deps.deviceId,
+        timestamp: this.#deps.now(),
+        clientNonce: randomClientNonceBase64Url(),
+        data: { itemId, tag: normalized },
+      },
+      [itemId],
+    );
+  }
+
+  async untag(itemId: string, tag: string): Promise<void> {
+    await this.#emit(
+      {
+        type: "ItemUntagged",
+        deviceId: this.#deps.deviceId,
+        timestamp: this.#deps.now(),
+        clientNonce: randomClientNonceBase64Url(),
+        data: { itemId, tag },
+      },
+      [itemId],
+    );
+  }
+
   async deleteItem(itemId: string): Promise<void> {
     await this.#emit(
       {
