@@ -27,6 +27,8 @@ import { EmptyInbox } from "./EmptyInbox.js";
 import { MainView } from "./MainView.js";
 import { RestoreFlow } from "./RestoreFlow.js";
 import { Settings } from "./Settings.js";
+import { PairDevice } from "./PairDevice.js";
+import { executePairing } from "../vault/pairing-existing-device.js";
 import { restoreFromMnemonic } from "../onboarding/restore-vault.js";
 
 type Screen =
@@ -37,7 +39,8 @@ type Screen =
   | { name: "restore" }
   | { name: "empty-inbox" }
   | { name: "inbox" }
-  | { name: "settings" };
+  | { name: "settings" }
+  | { name: "pair-device" };
 
 type AppProps = {
   storage: StoragePort;
@@ -161,6 +164,24 @@ export function App({ storage }: AppProps) {
         storage={storage}
         currentDeviceId={loaded.commands.getDeviceId()}
         onClose={() => setScreen({ name: "inbox" })}
+        onPairNewDevice={() => setScreen({ name: "pair-device" })}
+      />
+    );
+  }
+  if (screen.name === "pair-device") {
+    return (
+      <PairDevice
+        onCancel={() => setScreen({ name: "settings" })}
+        onConfirm={async (target) => {
+          const baseUrl = await getRelayBaseUrl(storage);
+          const currentDeviceAuthToken = await ensureDeviceAuthToken(storage);
+          await executePairing(target, {
+            storage,
+            relayBaseUrl: baseUrl,
+            currentDeviceAuthToken,
+          });
+          setScreen({ name: "settings" });
+        }}
       />
     );
   }
