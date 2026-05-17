@@ -29,6 +29,15 @@ export interface StoragePort {
 
   allEvents(): Promise<StoredEventRow[]>;
 
+  /**
+   * Stamps the relay-assigned `seq` onto a previously-locally-emitted
+   * event row, identified by its `(deviceId, clientNonce)` tuple (the
+   * `UNIQUE` index from the v1 migration). No-op if no matching row
+   * exists — defensive against an `onSeqAssigned` callback firing after
+   * the events table was cleared (e.g., by `vaultWipe` in slice #60).
+   */
+  stampEventSeq(deviceId: string, clientNonce: string, seq: number): Promise<void>;
+
   putItem(item: Item): Promise<void>;
 
   putItems(items: Item[]): Promise<void>;

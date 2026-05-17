@@ -6,6 +6,7 @@ import type { StoragePort } from "../storage/index.js";
 import type { VaultProjectionStore } from "./projection-store.js";
 import { randomClientNonceBase64Url } from "../util/base64.js";
 import { generateItemId } from "../util/random-item-id.js";
+import { encodePendingEvent } from "./wire-codec.js";
 
 export type VaultCommandsDeps = {
   storage: StoragePort;
@@ -13,6 +14,15 @@ export type VaultCommandsDeps = {
   pendingQueue: PendingEventQueue;
   deviceId: string;
   now: () => number;
+  /**
+   * Fire-and-forget trigger invoked after every save() so events flush in
+   * the background. The desktop wires this to `OutboundFlush.flush()`. The
+   * return type is `void` (not `Promise<void>`) deliberately — `save()`
+   * resolves as soon as the local state is durable, never blocking the
+   * UI on a flaky network. Errors inside the flush are surfaced through
+   * the host's own logging/toast pipeline.
+   */
+  onPersisted?: () => void;
 };
 
 /**
@@ -77,11 +87,13 @@ export class VaultCommands {
     const item = projection.getState().items.get(itemId);
     if (item) await storage.putItem(item);
 
-    // Wire format for the queue is UTF-8 JSON of the PendingEvent envelope.
-    // Slice #46 may swap this for an AEAD-encrypted bundle once the relay's
-    // wire format settles on a ciphertext shape (currently still plaintext
-    // PendingEvent per tests/e2e). The queue itself is content-opaque.
-    const bytes = new TextEncoder().encode(JSON.stringify(pendingEvent));
-    await pendingQueue.enqueue(bytes);
+    // Wire codec lives in `./wire-codec.ts` so `outboundFlush` decodes with
+    // the same shape — slice #45 hand-rolled the encode inline; #46 swaps
+    // it for the shared helper. The queue itself stays content-opaque.
+    await pendingQueue.enqueue(encodePendingEvent(pendingEvent));
+
+    // Kick the host's flush hook. Fire-and-forget by contract — save()
+    // does not await the network.
+    this.#deps.onPersisted?.();
   }
 }
