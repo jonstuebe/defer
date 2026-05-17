@@ -2,3 +2,4 @@ export { decodeMnemonic, deriveVaultIdFromKey, encodeVaultKey } from "./recovery
 export { canonicalize } from "./canonicalize/index.js";
 export * from "./events/index.js";
 export * from "./projection/index.js";
+export * as relayProtocol from "./relay-protocol/index.js";
