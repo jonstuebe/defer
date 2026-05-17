@@ -20,6 +20,7 @@ type MainViewProps = {
   search: SearchStore;
   lastOpened: LastOpenedStore;
   onRefresh: () => void;
+  onOpenSettings: () => void;
 };
 
 /**
@@ -28,7 +29,14 @@ type MainViewProps = {
  * management). Slice #51 adds keyboard navigation and the device-local
  * "I opened this URL" dim signal.
  */
-export function MainView({ projection, commands, search, lastOpened, onRefresh }: MainViewProps) {
+export function MainView({
+  projection,
+  commands,
+  search,
+  lastOpened,
+  onRefresh,
+  onOpenSettings,
+}: MainViewProps) {
   const allItems = useProjectionItems(projection);
   const allTags = useProjectionTags(projection);
   const lastOpenedMap = useLastOpenedSnapshot(lastOpened);
@@ -118,14 +126,24 @@ export function MainView({ projection, commands, search, lastOpened, onRefresh }
       <main className="layout-list">
         <header className="layout-list-header">
           <h1>{titleForFilter(filter)}</h1>
-          <button
-            type="button"
-            className="secondary"
-            onClick={onRefresh}
-            aria-label="Refresh — pull latest events from the relay"
-          >
-            Refresh
-          </button>
+          <div className="row">
+            <button
+              type="button"
+              className="secondary"
+              onClick={onRefresh}
+              aria-label="Refresh — pull latest events from the relay"
+            >
+              Refresh
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={onOpenSettings}
+              aria-label="Open settings"
+            >
+              Settings
+            </button>
+          </div>
         </header>
         <SaveBar onSave={handleSave} />
         <input
