@@ -1,5 +1,10 @@
 import { canonicalize } from "@defer/core/canonicalize";
-import { PendingItemSavedSchema, type Event } from "@defer/core";
+import {
+  PendingEventSchema,
+  PendingItemSavedSchema,
+  type Event,
+  type PendingEvent,
+} from "@defer/core";
 import { PendingEventQueue } from "@defer/core/pending-event-queue";
 
 import type { StoragePort } from "../storage/index.js";
@@ -15,12 +20,12 @@ export type VaultCommandsDeps = {
   deviceId: string;
   now: () => number;
   /**
-   * Fire-and-forget trigger invoked after every save() so events flush in
+   * Fire-and-forget trigger invoked after each command so events flush in
    * the background. The desktop wires this to `OutboundFlush.flush()`. The
-   * return type is `void` (not `Promise<void>`) deliberately — `save()`
-   * resolves as soon as the local state is durable, never blocking the
-   * UI on a flaky network. Errors inside the flush are surfaced through
-   * the host's own logging/toast pipeline.
+   * return type is `void` (not `Promise<void>`) deliberately — commands
+   * resolve as soon as the local state is durable, never blocking the UI
+   * on a flaky network. Errors inside the flush are surfaced through the
+   * host's own logging/toast pipeline.
    */
   onPersisted?: () => void;
 };
@@ -29,8 +34,13 @@ export type VaultCommandsDeps = {
  * The named-action API the UI calls. Each command builds the corresponding
  * `@defer/core` event, projects it locally, persists the plaintext envelope
  * to the desktop's `events` table, and enqueues the wire-shaped bytes onto
- * the pending-event queue. The queue itself is not flushed in slice #45 —
- * `outboundFlush` lands in slice #46.
+ * the pending-event queue.
+ *
+ * All commands share the same path: validate the pending envelope, apply
+ * to the projection, persist to the events table (with `seq=NULL` until
+ * the relay acks), persist the resulting `Item` row, enqueue for outbound
+ * flush, and signal `onPersisted`. The private `#emit` helper owns that
+ * sequence so the public commands stay readable.
  */
 export class VaultCommands {
   readonly #deps: VaultCommandsDeps;
@@ -40,39 +50,130 @@ export class VaultCommands {
   }
 
   async save(rawUrl: string, opts: { title?: string; savedAt?: number } = {}): Promise<void> {
-    const { storage, projection, pendingQueue, deviceId, now } = this.#deps;
     const canonicalUrl = canonicalize(rawUrl);
-    const timestamp = now();
+    const timestamp = this.#deps.now();
     const savedAt = opts.savedAt ?? timestamp;
     const itemId = generateItemId();
-    const clientNonce = randomClientNonceBase64Url();
-    const title = opts.title ?? "";
-
     const pendingEvent = {
       type: "ItemSaved" as const,
-      deviceId,
+      deviceId: this.#deps.deviceId,
       timestamp,
-      clientNonce,
+      clientNonce: randomClientNonceBase64Url(),
       data: {
         itemId,
         url: rawUrl,
         canonicalUrl,
-        title,
+        title: opts.title ?? "",
         savedAt,
       },
     };
-
-    // Validate at the boundary so a malformed save never enters the queue.
+    // Save needs schema validation at the boundary because its `data`
+    // payload is user-supplied (URL, title) — every other command's data
+    // comes from already-stored projection state, so per-event validation
+    // would be redundant. We still validate the envelope via `#emit`.
     PendingItemSavedSchema.parse(pendingEvent);
+    await this.#emit(pendingEvent, [itemId]);
+  }
 
-    // Local projection uses a synthetic seq=0 envelope — the reducer never
-    // reads `seq`, so the value is irrelevant for state. The real `seq`
-    // arrives in slice #46 when the relay acks and we overwrite the row.
+  async archive(itemId: string): Promise<void> {
+    await this.#emit(
+      {
+        type: "ItemArchived",
+        deviceId: this.#deps.deviceId,
+        timestamp: this.#deps.now(),
+        clientNonce: randomClientNonceBase64Url(),
+        data: { itemId },
+      },
+      [itemId],
+    );
+  }
+
+  async unarchive(itemId: string): Promise<void> {
+    await this.#emit(
+      {
+        type: "ItemUnarchived",
+        deviceId: this.#deps.deviceId,
+        timestamp: this.#deps.now(),
+        clientNonce: randomClientNonceBase64Url(),
+        data: { itemId },
+      },
+      [itemId],
+    );
+  }
+
+  async like(itemId: string): Promise<void> {
+    await this.#emit(
+      {
+        type: "ItemLiked",
+        deviceId: this.#deps.deviceId,
+        timestamp: this.#deps.now(),
+        clientNonce: randomClientNonceBase64Url(),
+        data: { itemId },
+      },
+      [itemId],
+    );
+  }
+
+  async unlike(itemId: string): Promise<void> {
+    await this.#emit(
+      {
+        type: "ItemUnliked",
+        deviceId: this.#deps.deviceId,
+        timestamp: this.#deps.now(),
+        clientNonce: randomClientNonceBase64Url(),
+        data: { itemId },
+      },
+      [itemId],
+    );
+  }
+
+  async editTitle(itemId: string, title: string): Promise<void> {
+    await this.#emit(
+      {
+        type: "ItemTitleEdited",
+        deviceId: this.#deps.deviceId,
+        timestamp: this.#deps.now(),
+        clientNonce: randomClientNonceBase64Url(),
+        data: { itemId, title },
+      },
+      [itemId],
+    );
+  }
+
+  async deleteItem(itemId: string): Promise<void> {
+    await this.#emit(
+      {
+        type: "ItemDeleted",
+        deviceId: this.#deps.deviceId,
+        timestamp: this.#deps.now(),
+        clientNonce: randomClientNonceBase64Url(),
+        data: { itemId },
+      },
+      [itemId],
+    );
+  }
+
+  /**
+   * Common emit pipeline shared by every command above.
+   *
+   * `affectedItemIds` is the set of item rows that may have changed shape
+   * after applying this event — we re-read them from the projection and
+   * persist the resulting rows so the items table stays consistent with
+   * the reducer's output. `ItemDeleted` sets `deletedAt`; subsequent
+   * `allItems()` reads exclude soft-deleted rows.
+   */
+  async #emit(pendingEvent: PendingEvent, affectedItemIds: readonly string[]): Promise<void> {
+    // Envelope shape check — defends against a future caller (or an
+    // accidental TS-loose cast) that constructs a malformed event. The
+    // reducer downstream assumes the discriminated union is well-formed.
+    PendingEventSchema.parse(pendingEvent);
+
+    // Synthetic seq=0 envelope; the reducer never reads `seq`. The real
+    // seq is stamped by `outboundFlush`'s onSeqAssigned (slice #46).
     const localEvent = { ...pendingEvent, seq: 0 } as Event;
+    this.#deps.projection.apply(localEvent);
 
-    projection.apply(localEvent);
-
-    await storage.appendEvent({
+    await this.#deps.storage.appendEvent({
       seq: null,
       type: pendingEvent.type,
       deviceId: pendingEvent.deviceId,
@@ -81,19 +182,13 @@ export class VaultCommands {
       payload: JSON.stringify(pendingEvent),
     });
 
-    // Persist the resulting Item row so the read model survives restart
-    // without a full event replay. (Replay is still the source of truth on
-    // `hydrate`; this is a caching write that keeps page-load fast.)
-    const item = projection.getState().items.get(itemId);
-    if (item) await storage.putItem(item);
+    const state = this.#deps.projection.getState();
+    for (const id of affectedItemIds) {
+      const item = state.items.get(id);
+      if (item) await this.#deps.storage.putItem(item);
+    }
 
-    // Wire codec lives in `./wire-codec.ts` so `outboundFlush` decodes with
-    // the same shape — slice #45 hand-rolled the encode inline; #46 swaps
-    // it for the shared helper. The queue itself stays content-opaque.
-    await pendingQueue.enqueue(encodePendingEvent(pendingEvent));
-
-    // Kick the host's flush hook. Fire-and-forget by contract — save()
-    // does not await the network.
+    await this.#deps.pendingQueue.enqueue(encodePendingEvent(pendingEvent));
     this.#deps.onPersisted?.();
   }
 }
