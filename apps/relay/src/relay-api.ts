@@ -10,6 +10,7 @@ import type { Env } from "./env.js";
 import { cors } from "./middleware/cors.js";
 import { errorEnvelope } from "./middleware/error-envelope.js";
 import { logging } from "./middleware/logging.js";
+import { pairingRateLimit } from "./middleware/pairing-rate-limit.js";
 import { requestId } from "./middleware/request-id.js";
 import { PairingTokenStore } from "./pairing-token-store.js";
 import { schemaViolation, unknownPairingToken, unknownVault } from "./errors.js";
@@ -174,6 +175,11 @@ export function createApp(env: Env): Hono<{ Bindings: Env; Variables: Variables 
     cors({ allowedOriginsEnv: env.CORS_ALLOWED_ORIGINS }),
     requestId(),
     logging({ hmacSecret: env.LOG_HMAC_SECRET }),
+    // Per-IP rate limit; only enforces on `/v1/pairing/*` (no-op elsewhere).
+    // Lives in the global chain so the structured log line for a 429 carries
+    // the per-request id and the client-IP hash uniformly across both
+    // pairing routes.
+    pairingRateLimit(),
   );
   app.onError(errorEnvelope());
 

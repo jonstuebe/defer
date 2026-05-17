@@ -141,6 +141,105 @@ sniffed schedule from hours ago still rejects.
 - `422 SCHEMA_VIOLATION` with `details.reason` — `deletedAt_mismatch`,
   `deleted_deviceId_not_relay`, or `scheduled_in_past`.
 
+## Rate limiting
+
+Two layers (issue #32):
+
+### Per-vault token buckets (in the Durable Object)
+
+Two independent token buckets, persisted to DO storage so they survive
+eviction. Both refill linearly at the configured `per-minute` rate up to the
+configured capacity. State keys: `meta:rate:events`, `meta:rate:requests`.
+
+| Bucket     | Capacity | Refill (per minute) | Endpoints                                                                                                                                                                                |
+| ---------- | -------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `events`   | 600      | 600                 | `POST /v1/vault/:vaultId/events` (consumes both `events` AND `requests`)                                                                                                                 |
+| `requests` | 1200     | 1200                | `GET /events`, `POST /devices`, `DELETE /devices/:deviceId`, `POST /schedule-deletion`, `POST /cancel-deletion`, and also consumed by `POST /events` (which spends one token per bucket) |
+
+The numbers are calibrated against the e2e demo harness (#31, which issues
+~5 requests per test) and sit ~100× above realistic happy-path traffic.
+They're explicitly placeholders; real tuning happens post-launch with
+production metrics. To override in v1, change the constants in
+`src/rate-limits.ts` at compile time (no env-var override yet; that lands in
+v2 once we have a production signal).
+
+### Cross-bucket semantics
+
+`POST /events` consumes from BOTH buckets in one shot. The check is
+atomic — both must pass before either decrements; if one fails, the OTHER
+is NOT decremented and the 429 response identifies which bucket tripped
+(`details.bucket`).
+
+A pull-storm that exhausts `requests` DOES block subsequent `POST /events`
+writes. The events bucket is the stricter on its own for writes; the
+requests bucket exists to catch GET-heavy abuse. Treating an exhausted
+`requests` bucket as a hard stop for writes too is intentional — pull-storm
+on a vault means the device is misbehaving, and blocking its writes is the
+right call.
+
+### Internal-only flows
+
+The deletion alarm fires inside the DO without going through `fetch()`, so
+the internal `VaultDeleted` event-log append the alarm performs does NOT
+consume bucket tokens. User-driven requests do; alarm-fired internal mutations
+don't.
+
+### Dispatch order
+
+The DO's `fetch()` dispatches in this fixed order:
+
+1. **Tombstone check** — a tombstoned vault returns `410 VAULT_DELETED`
+   on every endpoint (ADR-0007 §2). Wins over rate-limit.
+2. **Rate-limit check** — returns `429 RATE_LIMITED` with `Retry-After`
+   and `details: { bucket, retryAfterMs }`. Runs BEFORE auth so a
+   misbehaving anonymous caller can't burn a 401-storm into a free DoS.
+3. **Auth + handler** — `401 INVALID_TOKEN` lives here.
+
+The health endpoint is OUTSIDE vault routing; it never reaches the DO and
+never consumes tokens.
+
+### Pairing-endpoint global rate limit
+
+`POST /v1/pairing` and `GET /v1/pairing/:token` are unauthenticated and not
+vault-scoped, so the per-vault buckets don't apply. A separate global limit
+is enforced in `apps/relay/src/middleware/pairing-rate-limit.ts`, keyed by
+`cf-connecting-ip`: **60 requests per minute per client IP**.
+
+Two implementation paths, both shipped:
+
+- **Production**: Cloudflare's built-in `RateLimit` binding, declared as
+  `[[unsafe.bindings]] type = "ratelimit"` in `wrangler.toml`
+  (`PAIRING_RATE_LIMITER`). Edge-side enforcement; the binding does the
+  bucket math.
+- **Fallback (tests + accidental misconfig)**: an in-memory token-bucket
+  per IP, scoped to the Worker isolate. Used by the
+  `@cloudflare/vitest-pool-workers` harness because the unsafe RateLimit
+  binding isn't provisioned in the test pool. The fallback is approximate
+  across isolates but accurate enough at the rates we care about; in
+  production the real binding always applies.
+
+429s on the pairing path include `Retry-After: <integer seconds>` and the
+canonical envelope with `details: { bucket: "pairing", retryAfterMs }`.
+
+### Observability
+
+429s emit a structured log line via the standard logging middleware. The
+line carries the usual fields (`ts`, `requestId`, `method`, `path`,
+`status`, `latencyMs`, `vaultIdHash`) plus a `rateLimit` object:
+
+```json
+{
+  "rateLimit": {
+    "bucket": "events",
+    "retryAfterMs": 3200
+  }
+}
+```
+
+For pairing-endpoint 429s, `rateLimit` carries `clientIpHash` (HMAC under
+`LOG_HMAC_SECRET`) instead of `vaultIdHash` — the raw `cf-connecting-ip`
+never appears in logs.
+
 ## ADR cross-refs
 
 - [ADR-0001](../../docs/adr/0001-local-first-blind-cloudflare-relay.md) —

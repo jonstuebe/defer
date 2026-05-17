@@ -17,6 +17,14 @@ import {
 import { requireBearerToken } from "./auth.js";
 import type { Env } from "./env.js";
 import { RelayError } from "./errors.js";
+import {
+  consumeOne,
+  EVENTS_BUCKET_CAPACITY,
+  EVENTS_REFILL_PER_MIN,
+  REQUESTS_BUCKET_CAPACITY,
+  REQUESTS_REFILL_PER_MIN,
+  type TokenBucketState,
+} from "./rate-limits.js";
 
 // Storage key prefixes / markers, pinned in code so issue #30 (deletion alarm)
 // and issue #27 (device tokens) don't have to re-discover the layout. The
@@ -66,11 +74,27 @@ const KEY_INITIALIZED = "meta:initialized";
 const KEY_TOMBSTONE = "meta:tombstone";
 const KEY_PENDING_VAULT_DELETED = "meta:pendingVaultDeleted";
 const KEY_SCHEDULED_FOR = "meta:scheduledFor";
+// Rate-limit bucket storage keys (issue #32). Persisted on every consume so
+// bucket state survives DO eviction; a freshly-evicted DO restores tokens up
+// to the last-seen `lastRefillMs` rather than handing the caller a free
+// full-capacity bucket.
+const KEY_RATE_EVENTS = "meta:rate:events";
+const KEY_RATE_REQUESTS = "meta:rate:requests";
 const TOKEN_PREFIX = "token:";
 const DEVICE_PREFIX = "device:";
 const EVENT_PREFIX = "event:";
 const NONCE_PREFIX = "nonce:";
 const SEQ_PAD_WIDTH = 16;
+
+/**
+ * Which rate-limit bucket(s) a request consumes. Encoded as a small object
+ * so the dispatch table at the top of `fetch()` reads obviously and the
+ * consume logic can decrement both atomically.
+ */
+type BucketSet = { events: boolean; requests: boolean };
+
+/** Tag for the 429 response body so the client knows which bucket tripped. */
+type BucketTag = "events" | "requests";
 
 /**
  * Tolerance (ms) for `scheduledFor` in the past on `POST /schedule-deletion`.
@@ -160,6 +184,24 @@ export class VaultRelay {
       // tombstone-checking code in each handler.
       if (await this.#isTombstoned()) {
         throw new RelayError("VAULT_DELETED");
+      }
+
+      // Rate-limit gate (issue #32). Runs AFTER tombstone (a dead vault is a
+      // permanent 410, not 429) and BEFORE auth (a misbehaving anonymous
+      // caller must still spend bucket tokens — otherwise 401-storms become a
+      // free DoS vector). Health endpoint is OUTSIDE vault routing; it never
+      // reaches this dispatcher.
+      //
+      // Bucket consumption per endpoint:
+      //   POST /events       → events + requests (events is the stricter)
+      //   GET  /events       → requests only
+      //   POST /devices      → requests only
+      //   DELETE /devices/.. → requests only
+      //   POST /schedule-... → requests only
+      //   POST /cancel-...   → requests only
+      const buckets = this.#bucketsFor(method, path);
+      if (buckets !== null) {
+        await this.#enforceRateLimit(buckets);
       }
 
       if (path === "/events" && method === "POST") {
@@ -753,6 +795,119 @@ export class VaultRelay {
     return this.#json(200, responseBody);
   }
 
+  // --- rate-limit dispatch -------------------------------------------------
+
+  // Resolves which token buckets the (method, path) tuple consumes. Returns
+  // `null` for paths that aren't user-facing endpoints (e.g. a router-bug
+  // catch-all that would 404 anyway — we don't want to spend bucket tokens
+  // on those). The dispatch table mirrors the if-chain below; keeping them
+  // in lockstep is a manual maintenance point, but cheap because the surface
+  // area is small and pinned.
+  #bucketsFor(method: string, path: string): BucketSet | null {
+    if (path === "/events" && method === "POST") {
+      return { events: true, requests: true };
+    }
+    if (path === "/events" && method === "GET") {
+      return { events: false, requests: true };
+    }
+    if (path === "/devices" && method === "POST") {
+      return { events: false, requests: true };
+    }
+    if (path.startsWith("/devices/") && method === "DELETE") {
+      return { events: false, requests: true };
+    }
+    if (path === "/schedule-deletion" && method === "POST") {
+      return { events: false, requests: true };
+    }
+    if (path === "/cancel-deletion" && method === "POST") {
+      return { events: false, requests: true };
+    }
+    return null;
+  }
+
+  // Atomically check the required buckets, mutate both only if both pass.
+  // Throws `RelayError("RATE_LIMITED")` with `Retry-After` + `details.bucket`
+  // on the first failing bucket; the OTHER bucket is NOT decremented.
+  //
+  // Cross-bucket semantics (documented in the README + issue #32): when both
+  // buckets are required (POST /events), an exhausted `requests` bucket DOES
+  // block the write. The events bucket is the stricter on its own; this
+  // ensures a pull-storm that drains `requests` also backs off the writer
+  // (which is the right call — pull-storm on a vault means the device is
+  // misbehaving, and blocking its writes too is intended).
+  async #enforceRateLimit(buckets: BucketSet): Promise<void> {
+    const now = Date.now();
+
+    let eventsCurrent: TokenBucketState | undefined;
+    let requestsCurrent: TokenBucketState | undefined;
+    if (buckets.events) {
+      eventsCurrent = await this.#state.storage.get<TokenBucketState>(KEY_RATE_EVENTS);
+    }
+    if (buckets.requests) {
+      requestsCurrent = await this.#state.storage.get<TokenBucketState>(KEY_RATE_REQUESTS);
+    }
+
+    // First, simulate both consumes without mutating storage. If either fails,
+    // we throw without touching either bucket — that's the "atomic check-both
+    // first" rule from the issue brief.
+    const eventsOutcome = buckets.events
+      ? consumeOne(eventsCurrent, EVENTS_BUCKET_CAPACITY, EVENTS_REFILL_PER_MIN, now)
+      : null;
+    const requestsOutcome = buckets.requests
+      ? consumeOne(requestsCurrent, REQUESTS_BUCKET_CAPACITY, REQUESTS_REFILL_PER_MIN, now)
+      : null;
+
+    // Bucket-order matters for the 429 body: when BOTH would fail, the
+    // issue brief says to report whichever fails (it doesn't disambiguate),
+    // so we surface `events` first because it's the more restrictive on
+    // POST /events and the more interesting diagnostic for a write-heavy
+    // workload. The OTHER bucket stays un-mutated.
+    if (eventsOutcome !== null && !eventsOutcome.allowed) {
+      throw this.#rateLimitedError("events", eventsOutcome.retryAfterMs);
+    }
+    if (requestsOutcome !== null && !requestsOutcome.allowed) {
+      throw this.#rateLimitedError("requests", requestsOutcome.retryAfterMs);
+    }
+
+    // Both passed — persist atomically. DO storage applies multi-key puts
+    // atomically; DO single-threadedness already serialises against other
+    // requests so a concurrent reader can't observe a half-mutation.
+    const toPut: Record<string, unknown> = {};
+    if (eventsOutcome !== null && eventsOutcome.allowed) {
+      toPut[KEY_RATE_EVENTS] = {
+        tokens: eventsOutcome.newTokens,
+        lastRefillMs: eventsOutcome.newLastRefillMs,
+      } satisfies TokenBucketState;
+    }
+    if (requestsOutcome !== null && requestsOutcome.allowed) {
+      toPut[KEY_RATE_REQUESTS] = {
+        tokens: requestsOutcome.newTokens,
+        lastRefillMs: requestsOutcome.newLastRefillMs,
+      } satisfies TokenBucketState;
+    }
+    await this.#state.storage.put(toPut);
+  }
+
+  #rateLimitedError(bucket: BucketTag, retryAfterMs: number): RelayError {
+    // `Retry-After` is integer seconds per RFC 7231 §7.1.3. We ceil so a
+    // client that retries exactly at the advertised time has at least one
+    // token available; minimum 1s avoids a `Retry-After: 0` that loops
+    // tightly.
+    const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+    return new RelayError("RATE_LIMITED", `rate limit exceeded on bucket "${bucket}"`, {
+      "Retry-After": String(retryAfterSeconds),
+      // Internal headers consumed by the Worker-tier logging middleware to
+      // emit the `rateLimit: { bucket, retryAfterMs }` structured log line
+      // for 429s. They flow through `forwardToDurableObject` verbatim and
+      // the logging middleware reads them off the final response; they're
+      // not part of the client contract (a future cleanup might strip them
+      // before returning to the client, but for v1 leaving them visible is
+      // a harmless diagnostic).
+      "X-Defer-RateLimit-Bucket": bucket,
+      "X-Defer-RateLimit-Retry-After-Ms": String(retryAfterMs),
+    }).withDetails({ bucket, retryAfterMs });
+  }
+
   // --- helpers -------------------------------------------------------------
 
   async #isInitialized(): Promise<boolean> {
@@ -797,9 +952,17 @@ export class VaultRelay {
       if (err.details !== undefined) {
         body.details = err.details;
       }
+      // Merge any error-specific headers (e.g. `Retry-After` for
+      // `RATE_LIMITED`) on top of the default Content-Type. The Worker
+      // forwarder preserves the DO response's headers verbatim, so
+      // `Retry-After` flows through to the client unchanged.
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      for (const [name, value] of Object.entries(err.headers)) {
+        headers[name] = value;
+      }
       return new Response(JSON.stringify(body), {
         status: err.status,
-        headers: { "Content-Type": "application/json" },
+        headers,
       });
     }
     // Unexpected throw — surface as INTERNAL_ERROR with no details so the
