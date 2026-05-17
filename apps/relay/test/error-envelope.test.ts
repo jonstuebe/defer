@@ -43,7 +43,8 @@ describe("error envelope (ADR-0007 §2) — 404 against the real Worker", () => 
     // "vault path → UNKNOWN_VAULT" envelope coverage independent of the
     // events endpoint's per-request auth behaviour.
     const response = await SELF.fetch(
-      "https://relay.example.com/v1/vault/abcdef0123456789abcdef0123456789/devices",
+      // 22-char base64url, matching the router-boundary VAULT_ID_REGEX.
+      "https://relay.example.com/v1/vault/abcdefghijklmnopqrstuv/devices",
     );
     expect(response.status).toBe(404);
     expect(response.headers.get("Content-Type")).toContain("application/json");

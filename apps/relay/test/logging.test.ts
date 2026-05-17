@@ -16,7 +16,11 @@ import { hashVaultId } from "../src/log/hash-vault-id.js";
 // pre-compute the expected hash via the same `hashVaultId` helper the
 // middleware uses.
 
-const RAW_VAULT_ID = "abcdef0123456789abcdef0123456789";
+// 22-char base64url — matches the router-boundary VAULT_ID_REGEX. The
+// specific bytes don't matter for this test (we only assert the hash); we
+// just need a wire-shaped value so the route validation lets the request
+// through to the logging middleware.
+const RAW_VAULT_ID = "abcdefghijklmnopqrstuv";
 const LOG_HMAC_SECRET = "dev-secret-for-tests";
 
 interface ParsedLogLine {

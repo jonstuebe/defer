@@ -34,13 +34,17 @@ function nonceGen(): () => string {
   };
 }
 
-// Fresh vault id per test (random hex). Using a fresh vault ID per test
-// gives each test its own DO storage namespace, so we don't need to clear
-// state between tests.
+// Fresh vault id per test — 22-char base64url (16 random bytes), matching
+// the production wire format (ADR-0007 §"vault id derivation" + the
+// router-boundary VAULT_ID_REGEX in `relay-api.ts`). Using a fresh vault ID
+// per test gives each test its own DO storage namespace, so we don't need
+// to clear state between tests.
 function freshVaultId(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function pendingItemSaved(args: {
