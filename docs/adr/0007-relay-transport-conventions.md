@@ -52,6 +52,7 @@ Every non-2xx response from any relay endpoint MUST carry this JSON body:
 - `error` — human-readable short category, one of `unauthorized`, `forbidden`, `not_found`, `conflict`, `gone`, `invalid_request`, `rate_limited`, `internal_error`. Picked for triage at a glance; not load-bearing for pattern-matching.
 - `code` — machine-readable closed enum (see below). Phase 3+ clients pattern-match against this enum. Adding new codes is a protocol bump.
 - `requestId` — UUID v7 generated per request and echoed in the `X-Request-Id` response header so client logs and relay logs can be cross-correlated. (UUID v7 over v4 because UUID v7 sorts lexicographically by time, which makes log scans bearable.)
+- `details` — **optional** free-form object carrying code-specific context. Used today by `DUPLICATE_CLIENT_NONCE` (`details.eventIndex` points at the offending event in a rejected batch); future codes may carry whatever shape is useful. Clients SHOULD treat the presence of `details` and its specific keys as informational only — they MUST NOT change their handling of a response based on `details` alone (always pattern-match on `code` first). The envelope schema is parsed non-strict so producers shipping before this addendum continue to validate.
 
 ### Status code table
 

@@ -90,7 +90,7 @@ The first authenticated `POST /v1/vault/:vaultId/events` from a previously-unsee
 _Avoid_: vault creation, signup, registration
 
 **Error envelope**:
-The single JSON shape every non-2xx relay response carries: `{ error, code, requestId }`. `error` is a short human-readable category, `code` is a machine-readable closed enum (shipped from `@defer/core`'s `relayProtocol` sub-module), `requestId` is a UUID v7 echoed in the `X-Request-Id` header for log cross-correlation. Pinned by ADR-0007.
+The single JSON shape every non-2xx relay response carries: `{ error, code, requestId, details? }`. `error` is a short human-readable category, `code` is a machine-readable closed enum (shipped from `@defer/core`'s `relayProtocol` sub-module), `requestId` is a UUID v7 echoed in the `X-Request-Id` header for log cross-correlation, and the optional `details` is a free-form object carrying code-specific context (e.g. `{ eventIndex }` on `DUPLICATE_CLIENT_NONCE` to point at the offending event in a rejected batch). Pinned by ADR-0007.
 _Avoid_: error response, error body, fault
 
 **Client nonce**:

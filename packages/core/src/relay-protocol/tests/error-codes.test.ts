@@ -118,4 +118,36 @@ describe("ErrorEnvelopeSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("parses an envelope with an optional `details` object (ADR-0007 §2)", () => {
+    const envelope = {
+      error: "conflict" as const,
+      code: "DUPLICATE_CLIENT_NONCE" as const,
+      requestId: REQUEST_ID_V7,
+      details: { eventIndex: 3 },
+    };
+    const parsed = ErrorEnvelopeSchema.parse(envelope);
+    expect(parsed.details).toEqual({ eventIndex: 3 });
+  });
+
+  it("parses an envelope without `details` (the field is optional)", () => {
+    const envelope = {
+      error: "unauthorized" as const,
+      code: "INVALID_TOKEN" as const,
+      requestId: REQUEST_ID_V7,
+    };
+    const parsed = ErrorEnvelopeSchema.parse(envelope);
+    expect(parsed.details).toBeUndefined();
+  });
+
+  it("accepts arbitrary keys inside `details` (free-form record)", () => {
+    const envelope = {
+      error: "rate_limited" as const,
+      code: "RATE_LIMITED" as const,
+      requestId: REQUEST_ID_V7,
+      details: { retryAfterMs: 1000, bucket: "events" },
+    };
+    const parsed = ErrorEnvelopeSchema.parse(envelope);
+    expect(parsed.details).toEqual({ retryAfterMs: 1000, bucket: "events" });
+  });
 });
