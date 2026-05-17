@@ -24,8 +24,16 @@ import { RelayError } from "./errors.js";
 //
 //   meta:nextSeq           number          — next `seq` to assign (starts at 1)
 //   meta:initialized       true            — existence marker for "has been bootstrapped"
-//   meta:tombstone         true            — set by the deletion alarm (#30); checked
-//                                            by every endpoint; permanent (no rebirth)
+//   meta:tombstone         TombstoneRecord — set by the deletion alarm (#30); checked
+//                          | true            by every endpoint; permanent (no rebirth).
+//                                            Issue #30 stores the structured shape
+//                                            `{ deletedAt, vaultDeletedSeq }`. Earlier
+//                                            code paths (and #29's test affordance)
+//                                            may write a bare `true`; the runtime
+//                                            check treats any truthy value as
+//                                            tombstoned. The first alarm-fire on a
+//                                            bare-`true` tombstone upgrades it to the
+//                                            structured shape.
 //   token:<token>          { deviceId }    — membership set: token validity + owning
 //                                            deviceId (issue #27 upgraded the value
 //                                            from a bare `true` to a JSON object so
@@ -95,6 +103,20 @@ interface TokenRecord {
   deviceId: string;
 }
 
+/**
+ * Value persisted at `meta:tombstone` AFTER the deletion alarm has fired
+ * (issue #30). The 410 dispatcher check only reads truthy/falsy from this
+ * key — the structured shape exists so that GET-style introspection (tests,
+ * future status endpoints) can surface "deleted at <time>, seq <n>" without
+ * re-reading the wiped event log. Earlier code paths (and the test
+ * affordance `setTombstone`) may write a bare `true`; both shapes are
+ * accepted by `#isTombstoned`.
+ */
+interface TombstoneRecord {
+  deletedAt: number;
+  vaultDeletedSeq: number;
+}
+
 // Single source of truth for the per-DO page-size cap. Exposed via an
 // optional `MAX_PAGE_SIZE_OVERRIDE` Env binding so tests can drive the
 // "more events than fit in one page → nextSince is non-null" path without
@@ -121,14 +143,24 @@ export class VaultRelay {
   }
 
   async fetch(request: Request): Promise<Response> {
-    // Single dispatch point so both endpoints share auth + tombstone checks
-    // when applicable. The Worker-side router strips the `/v1/vault/:vaultId`
-    // prefix and rewrites the URL before forwarding, so we match against the
-    // remaining path.
+    // Single dispatch point so every endpoint shares the tombstone short-
+    // circuit and per-handler error normalisation. The Worker-side router
+    // strips the `/v1/vault/:vaultId` prefix and rewrites the URL before
+    // forwarding, so we match against the remaining path.
     try {
       const url = new URL(request.url);
       const path = url.pathname;
       const method = request.method.toUpperCase();
+
+      // 410 short-circuit. ADR-0007 §2: a tombstoned vault returns
+      // `VAULT_DELETED` on EVERY endpoint, and the check runs BEFORE auth
+      // (ADR-0007 §1 + issue #30). A request to a dead vault with a junk
+      // bearer must surface "the vault is gone" — that's a stronger,
+      // more useful signal than "your bearer is bad", and it spares
+      // tombstone-checking code in each handler.
+      if (await this.#isTombstoned()) {
+        throw new RelayError("VAULT_DELETED");
+      }
 
       if (path === "/events" && method === "POST") {
         return await this.#handlePush(request);
@@ -163,20 +195,123 @@ export class VaultRelay {
     }
   }
 
+  // --- alarm(): vault-deletion data plane ----------------------------------
+  //
+  // Fired by the Cloudflare runtime when the wall-clock time the control
+  // plane (#29) armed via `state.storage.setAlarm(scheduledFor)` is reached.
+  // Cloudflare guarantees at-least-once delivery; this handler is therefore
+  // built to be idempotent.
+  //
+  // Order matters (ADR-0005, ADR-0006 §5, issue #30):
+  //
+  //   1. Tombstone-already? → no-op + structured "alarm.duplicate" log.
+  //   2. Load `meta:pendingVaultDeleted`. If missing (cancel-then-fire race
+  //      window), no-op + structured "alarm.no-pending-payload" log.
+  //   3. Stamp `seq` on the pre-signed envelope, append to event log,
+  //      register the nonce, advance `meta:nextSeq`.
+  //   4. Snapshot `deletedAt` and the assigned seq into local variables
+  //      BEFORE the deleteAll() — they have to survive storage wipe.
+  //   5. `state.storage.deleteAll()` — wipes EVERYTHING including the keys
+  //      we just wrote. ADR-0005 is explicit: the vault's encrypted blobs
+  //      are gone from the relay after deletion.
+  //   6. Re-write `meta:tombstone` as the very last storage operation. It
+  //      survives step 5 because we write it AFTER. The tombstone is the
+  //      source-of-truth for "this vault is dead" — the 410 dispatcher
+  //      check at the top of `fetch()` reads it.
+  //
+  // The dance in steps 5–6 is the trick the issue body calls out: there is
+  // no "deleteAll except for one key" primitive on DO storage, so we wipe
+  // and immediately re-write the marker. DO single-threading guarantees no
+  // concurrent request can observe the inter-step empty state.
   async alarm(): Promise<void> {
-    // No-op skeleton. The deletion alarm (ADR-0005, ADR-0006 §5) lands with
-    // issue #30.
+    // Step 1: idempotency. At-least-once alarm delivery means we might be
+    // called for a vault that's already tombstoned. The vault's state cannot
+    // change after this, so a repeat fire is a clean no-op.
+    if (await this.#isTombstoned()) {
+      // eslint-disable-next-line no-console
+      console.log(JSON.stringify({ event: "alarm.duplicate", level: "debug" }));
+      return;
+    }
+
+    // Step 2: load the pre-signed envelope. If a `POST /cancel-deletion`
+    // sneaked in between alarm-set and alarm-fire (the cancel handler
+    // deletes `meta:pendingVaultDeleted` and clears the alarm — but the
+    // alarm may already be in-flight from the runtime), we have no envelope
+    // to emit. The cancellation already accomplished the cancel; the alarm
+    // is a leftover. Log and exit.
+    const pending = await this.#state.storage.get<unknown>(KEY_PENDING_VAULT_DELETED);
+    if (pending === undefined) {
+      // eslint-disable-next-line no-console
+      console.log(JSON.stringify({ event: "alarm.no-pending-payload", level: "debug" }));
+      return;
+    }
+
+    // Step 3: stamp seq and write to the event log.
+    const nextSeqStored = (await this.#state.storage.get<number>(KEY_NEXT_SEQ)) ?? 1;
+    const assignedSeq = nextSeqStored;
+    // Type narrowing: parse via the pending schema for type safety; the
+    // control plane (#29) already validated this blob before storing, so
+    // re-validation here is paranoia, not a meaningful guard. We use the
+    // typed `PendingEvent` shape so `stampSeq` can return the discriminated
+    // union `Event` cleanly.
+    const stamped: Event = stampSeq(pending as PendingEvent, assignedSeq);
+    // Per ADR-0006 §5, the MAC on the pre-signed envelope is computed over
+    // the envelope WITHOUT `seq`, so adding `seq` here does not invalidate
+    // the signature when clients verify it. The envelope is otherwise
+    // byte-equal to what `POST /schedule-deletion` stored.
+    const pendingDeleted = pending as PendingEvent;
+    const relayNonceKey = nonceKey(pendingDeleted.deviceId, pendingDeleted.clientNonce);
+
+    await this.#state.storage.put({
+      [eventKey(assignedSeq)]: stamped,
+      [relayNonceKey]: assignedSeq,
+      [KEY_NEXT_SEQ]: nextSeqStored + 1,
+    });
+
+    // Step 4: snapshot the fields we need to re-write after `deleteAll`.
+    // `stamped.data.deletedAt` is the canonical `deletedAt` from the
+    // pre-signed payload (== `scheduledFor` per ADR-0006 §5's equality
+    // rule, enforced at schedule-time).
+    //
+    // Type narrowing: `stamped` is the `Event` discriminated union. We
+    // asserted at schedule-time that `pending.type === "VaultDeleted"`
+    // (schema validation in `#handleScheduleDeletion`), so accessing
+    // `.data.deletedAt` is safe. The cast keeps the type system aware
+    // that this branch is `VaultDeleted` without re-doing the parse.
+    const deletedAt = (stamped as Event & { type: "VaultDeleted" }).data.deletedAt;
+    const vaultDeletedSeq = assignedSeq;
+
+    // Step 5: wipe everything. After this returns, the DO has no events,
+    // no tokens, no device list, no nonces, no scheduledFor, no
+    // pendingVaultDeleted, no initialized marker, no nextSeq, no
+    // tombstone — empty.
+    await this.#state.storage.deleteAll();
+
+    // Step 6: write the tombstone as a single-key put AFTER the wipe. The
+    // structured shape carries `deletedAt` (for clients that want to
+    // explain "this vault was deleted at <time>" without needing the
+    // event log) and `vaultDeletedSeq` (the seq the alarm assigned to
+    // the now-wiped event, for parity with the in-memory record some
+    // tests assert against). The 410 dispatcher check only reads truthy/
+    // falsy from this key, so the shape is informational.
+    //
+    // Single-threading note: between step 5 and step 6 the DO is briefly
+    // empty (no tombstone yet). DO request handlers are serialised on the
+    // same isolate as `alarm()`, so no incoming request can observe the
+    // gap. Cloudflare's docs guarantee `alarm()` runs to completion
+    // before the next request handler tick — see
+    // https://developers.cloudflare.com/durable-objects/api/alarms/.
+    const tombstone: TombstoneRecord = { deletedAt, vaultDeletedSeq };
+    await this.#state.storage.put(KEY_TOMBSTONE, tombstone);
   }
 
   // --- POST /events --------------------------------------------------------
 
   async #handlePush(request: Request): Promise<Response> {
+    // The fetch() dispatcher already short-circuited tombstoned vaults to
+    // 410, so we don't repeat the check here.
     const token = requireBearerToken(request);
     const initialized = await this.#isInitialized();
-    const tombstoned = await this.#isTombstoned();
-    if (tombstoned) {
-      throw new RelayError("VAULT_DELETED");
-    }
 
     // Schema-validate first so a malformed body never touches storage, but
     // bootstrap-state check happens BEFORE auth-set lookup (we need to know
@@ -274,6 +409,8 @@ export class VaultRelay {
   // --- GET /events ---------------------------------------------------------
 
   async #handlePull(request: Request, url: URL): Promise<Response> {
+    // The fetch() dispatcher already short-circuited tombstoned vaults to
+    // 410, so we don't repeat the check here.
     const token = requireBearerToken(request);
 
     // ADR-0007 §1: GET against an uninitialized vault returns 404 UNKNOWN_VAULT.
@@ -281,11 +418,6 @@ export class VaultRelay {
     const initialized = await this.#isInitialized();
     if (!initialized) {
       throw new RelayError("UNKNOWN_VAULT");
-    }
-
-    const tombstoned = await this.#isTombstoned();
-    if (tombstoned) {
-      throw new RelayError("VAULT_DELETED");
     }
 
     const known = await this.#state.storage.get<TokenRecord>(tokenKey(token));
@@ -344,15 +476,10 @@ export class VaultRelay {
   // blind-relay invariant (ADR-0001). The caller's possession of a valid
   // bearer is the only auth signal.
   async #handleRegisterDevice(request: Request): Promise<Response> {
+    // The fetch() dispatcher already short-circuited tombstoned vaults to
+    // 410 BEFORE auth. ADR-0007 §2: a tombstoned vault never surfaces
+    // "unknown vault" or "invalid token" — it's `gone`, full stop.
     const token = requireBearerToken(request);
-
-    // Tombstone check is unconditional and runs before unknown-vault check
-    // for symmetry with the events endpoints. A tombstoned vault never
-    // surfaces "unknown vault" — it's `gone`, full stop (ADR-0007 §2).
-    const tombstoned = await this.#isTombstoned();
-    if (tombstoned) {
-      throw new RelayError("VAULT_DELETED");
-    }
 
     // No first-write self-registration on this endpoint (ADR-0007 §1 table):
     // an uninitialized vault is `UNKNOWN_VAULT`, not "bootstrap-on-POST".
@@ -410,12 +537,9 @@ export class VaultRelay {
   // recoverable via the recovery mnemonic on a fresh device. The DO is NOT
   // destroyed here — only the deletion-alarm path (#30) tombstones storage.
   async #handleRevokeDevice(request: Request, deviceId: string): Promise<Response> {
+    // The fetch() dispatcher already short-circuited tombstoned vaults to
+    // 410 BEFORE auth.
     const token = requireBearerToken(request);
-
-    const tombstoned = await this.#isTombstoned();
-    if (tombstoned) {
-      throw new RelayError("VAULT_DELETED");
-    }
 
     const initialized = await this.#isInitialized();
     if (!initialized) {
@@ -450,13 +574,9 @@ export class VaultRelay {
   // §5), and arm a DO alarm for `scheduledFor`. The alarm handler itself is a
   // no-op skeleton until issue #30 lands the data-plane wipe.
   async #handleScheduleDeletion(request: Request): Promise<Response> {
+    // The fetch() dispatcher already short-circuited tombstoned vaults to
+    // 410 BEFORE auth, per ADR-0007 §1.
     const token = requireBearerToken(request);
-
-    // 410 short-circuits everything else, per ADR-0007 §1.
-    const tombstoned = await this.#isTombstoned();
-    if (tombstoned) {
-      throw new RelayError("VAULT_DELETED");
-    }
 
     // 404 on uninitialized vault — no first-write self-registration on this
     // endpoint (ADR-0007 §1 table).
@@ -571,12 +691,9 @@ export class VaultRelay {
   // event log, drop the stored pre-signed `VaultDeleted` blob (ADR-0006 §5),
   // and cancel the DO alarm.
   async #handleCancelDeletion(request: Request): Promise<Response> {
+    // The fetch() dispatcher already short-circuited tombstoned vaults to
+    // 410 BEFORE auth.
     const token = requireBearerToken(request);
-
-    const tombstoned = await this.#isTombstoned();
-    if (tombstoned) {
-      throw new RelayError("VAULT_DELETED");
-    }
 
     const initialized = await this.#isInitialized();
     if (!initialized) {
@@ -643,7 +760,12 @@ export class VaultRelay {
   }
 
   async #isTombstoned(): Promise<boolean> {
-    return (await this.#state.storage.get<boolean>(KEY_TOMBSTONE)) === true;
+    // Any truthy value at `meta:tombstone` means the vault is dead. Issue #30
+    // writes a structured `{ deletedAt, vaultDeletedSeq }` record; earlier
+    // code paths (and the #29-era test affordance `setTombstone`) write a
+    // bare `true`. Both must short-circuit every endpoint to 410.
+    const value = await this.#state.storage.get<unknown>(KEY_TOMBSTONE);
+    return value !== undefined && value !== null && value !== false;
   }
 
   #json(status: number, body: unknown): Response {
