@@ -107,3 +107,67 @@ export type RegisterDeviceResponse = z.infer<typeof RegisterDeviceResponseSchema
  */
 export const RevokeDeviceResponseSchema = z.object({ ok: z.literal(true) });
 export type RevokeDeviceResponse = z.infer<typeof RevokeDeviceResponseSchema>;
+
+// --- Pairing handshake (issue #28) ---------------------------------------
+//
+// The pairing flow lets a new device receive a sealed `(vaultKey,
+// deviceAuthToken)` blob from an already-paired device via the relay's
+// blind-relay KV store. ADR-0003 §"pairing handshake" covers the cryptographic
+// shape; this slice is the relay's wire contract. Both endpoints are
+// unauthenticated — the unguessable 16-byte pairing token is the only access
+// signal, and the relay never sees plaintext (the payload is sealed to the
+// new device's ephemeral pubkey, which the relay never holds).
+//
+// Forward-compat note: extending the wire shape (e.g. adding optional response
+// fields) is safe; renaming or removing existing fields requires a protocol
+// bump.
+
+/**
+ * Closed regex for the pairing token on the wire. 16 bytes of CSPRNG encoded
+ * as 22-char base64url (URL-safe alphabet, no padding) — the same shape used
+ * for `vaultId`, `deviceId`, and `clientNonce` elsewhere in the protocol.
+ * Enforced at both the client (so a malformed token never leaves the device)
+ * and the relay (so a malformed token never touches KV).
+ */
+export const PAIRING_TOKEN_REGEX = /^[A-Za-z0-9_-]{22}$/;
+
+/**
+ * Hard cap on the decoded payload size in bytes. A sealed `(vaultKey,
+ * deviceAuthToken)` is < 100 bytes in practice; 4 KB is a generous ceiling
+ * that still rules out any abuse of the unauthenticated PUT endpoint as a
+ * blob store. Decoded byte length is the real gate — the Zod regex only
+ * confirms the wire charset.
+ */
+export const MAX_SEALED_PAYLOAD_BYTES = 4096;
+
+/**
+ * Body shape for `POST /v1/pairing`. The relay treats `sealedPayload` as
+ * opaque bytes — the only schema-level constraint is that it's standard
+ * base64 (URL-safe variants are NOT used here because the relay round-trips
+ * the exact wire string; pinning the charset prevents a client from sneaking
+ * non-base64 bytes in). Decoded-byte-length is enforced server-side after
+ * Zod parse: payloads larger than `MAX_SEALED_PAYLOAD_BYTES` decoded → 422.
+ *
+ * No `PutPairingResponseSchema` is exported — the response is 204 No Content
+ * (no body to parse).
+ */
+export const PutPairingRequestSchema = z
+  .object({
+    pairingToken: z.string().regex(PAIRING_TOKEN_REGEX),
+    sealedPayload: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/),
+  })
+  .strict();
+export type PutPairingRequest = z.infer<typeof PutPairingRequestSchema>;
+
+/**
+ * Response shape for `GET /v1/pairing/:token`. The relay returns the exact
+ * base64 string that was stored — clients decode + unseal locally. Same
+ * base64 charset as `PutPairingRequestSchema.sealedPayload` so the round-trip
+ * is byte-for-byte identical.
+ */
+export const GetPairingResponseSchema = z
+  .object({
+    sealedPayload: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/),
+  })
+  .strict();
+export type GetPairingResponse = z.infer<typeof GetPairingResponseSchema>;
