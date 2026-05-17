@@ -10,6 +10,7 @@ import { SqlitePendingQueueStorage } from "../vault/pending-queue-adapter.js";
 import { decodePendingEvent } from "../vault/wire-codec.js";
 import { ensureDeviceAuthToken, getRelayBaseUrl } from "../vault/relay-config.js";
 import { InboundScheduler, makeInboundReplay } from "../vault/inbound.js";
+import { SearchStore } from "../vault/search-store.js";
 import { LastOpenedStore } from "../runtime/last-opened-store.js";
 import {
   createVault,
@@ -44,6 +45,7 @@ export function App({ storage }: AppProps) {
     commands: VaultCommands;
     inbound: InboundScheduler;
     lastOpened: LastOpenedStore;
+    search: SearchStore;
   } | null>(null);
 
   useEffect(() => {
@@ -130,6 +132,7 @@ export function App({ storage }: AppProps) {
       projection={services.projection}
       commands={services.commands}
       lastOpened={services.lastOpened}
+      search={services.search}
       onRefresh={() => services.inbound.triggerNow()}
     />
   );
@@ -143,9 +146,13 @@ async function buildServices(
   commands: VaultCommands;
   inbound: InboundScheduler;
   lastOpened: LastOpenedStore;
+  search: SearchStore;
 }> {
   const projection = new VaultProjectionStore(storage);
   await projection.hydrate();
+
+  const search = new SearchStore();
+  await search.hydrate(storage);
 
   const pendingQueue = new PendingEventQueue(new SqlitePendingQueueStorage(storage));
 
@@ -170,6 +177,7 @@ async function buildServices(
     storage,
     projection,
     pendingQueue,
+    searchStore: search,
     deviceId,
     now: Date.now,
     onPersisted: () => {
@@ -189,11 +197,16 @@ async function buildServices(
     },
   });
 
-  const inboundReplay = makeInboundReplay({ client, storage, projection });
+  const inboundReplay = makeInboundReplay({
+    client,
+    storage,
+    projection,
+    searchStore: search,
+  });
   const inbound = new InboundScheduler(inboundReplay);
 
   const lastOpened = new LastOpenedStore(storage);
   await lastOpened.hydrate();
 
-  return { projection, commands, inbound, lastOpened };
+  return { projection, commands, inbound, lastOpened, search };
 }

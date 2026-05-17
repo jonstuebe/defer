@@ -37,6 +37,10 @@
     "./inbound-replay": {
       "types": "./src/inbound-replay/index.ts",
       "default": "./src/inbound-replay/index.ts"
+    },
+    "./search-index": {
+      "types": "./src/search-index/index.ts",
+      "default": "./src/search-index/index.ts"
     }
   },
   "scripts": {

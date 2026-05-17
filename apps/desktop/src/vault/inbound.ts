@@ -4,6 +4,7 @@ import type { Event } from "@defer/core";
 
 import type { StoragePort } from "../storage/index.js";
 import type { VaultProjectionStore } from "./projection-store.js";
+import type { SearchStore } from "./search-store.js";
 
 export const SETTING_INBOUND_CURSOR = "sync.inboundCursor";
 
@@ -34,8 +35,9 @@ export function makeInboundReplay(deps: {
   client: RelayClient;
   storage: StoragePort;
   projection: VaultProjectionStore;
+  searchStore?: SearchStore;
 }): InboundReplay {
-  const { client, storage, projection } = deps;
+  const { client, storage, projection, searchStore } = deps;
   return new InboundReplay({
     client,
     async readCursor() {
@@ -57,6 +59,7 @@ export function makeInboundReplay(deps: {
         payload: JSON.stringify(event),
       });
       projection.apply(event);
+      searchStore?.apply(event);
     },
     onSkipped(reason, raw) {
       // eslint-disable-next-line no-console
