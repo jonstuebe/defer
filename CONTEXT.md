@@ -11,7 +11,7 @@ The user's complete collection of saved items, protected by a 32-byte vault key.
 _Avoid_: account, library, workspace
 
 **Vault key**:
-The 32-byte symmetric key that encrypts every event in a vault. Held only by paired devices; never seen by the relay.
+The 32-byte symmetric key that encrypts every event in a vault. Held only by paired devices; never seen by the relay. Throughout this doc and ADR-0005, the phrase "signed with the Vault key" is shorthand for "MAC'd with the Vault key (HMAC-SHA256)" — there is no asymmetric signing scheme involved. The vault key is symmetric; anyone holding it can both produce and verify the MAC. See ADR-0003 and ADR-0006 for the canonical-bytes and wire-encoding rules.
 _Avoid_: master key, encryption key, secret
 
 **Recovery mnemonic**:

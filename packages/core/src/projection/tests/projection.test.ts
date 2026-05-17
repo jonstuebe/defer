@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { apply, initialVaultState, type VaultState } from "../index.js";
 import type { Event } from "../../events/index.js";
 
-const SIG = "c2lnbmF0dXJlLWJ5dGVz";
+// Placeholder MAC. ADR-0006: base64url HMAC-SHA256 → 43 chars unpadded.
+const SIG = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 const env = (
   seq: number,
