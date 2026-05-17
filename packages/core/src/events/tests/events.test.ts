@@ -25,10 +25,14 @@ import {
   PendingItemArchivedSchema,
 } from "../index.js";
 
+// 22-char base64url placeholder for the 16-byte `clientNonce` (ADR-0006 §4.1).
+const CLIENT_NONCE = "AAAAAAAAAAAAAAAAAAAAAA";
+
 const envelope = {
   seq: 1,
   deviceId: "device-abc",
   timestamp: 1_700_000_000_000,
+  clientNonce: CLIENT_NONCE,
 };
 
 describe("EventSchema (catalog)", () => {
@@ -121,7 +125,7 @@ describe("EventSchema (catalog)", () => {
 });
 
 describe("envelope validation (shared across all events)", () => {
-  it("requires seq, deviceId, and timestamp", () => {
+  it("requires seq, deviceId, timestamp, and clientNonce", () => {
     expect(
       EventSchema.safeParse({
         type: "ItemArchived",
@@ -137,6 +141,51 @@ describe("envelope validation (shared across all events)", () => {
         data: { itemId: "i1" },
       }).success,
     ).toBe(false);
+
+    // Missing `clientNonce` alone is rejected.
+    expect(
+      EventSchema.safeParse({
+        type: "ItemArchived",
+        seq: 1,
+        deviceId: "d1",
+        timestamp: 1,
+        data: { itemId: "i1" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects clientNonce that is not 22 base64url chars", () => {
+    const cases = [
+      "", // empty
+      "A".repeat(21), // too short
+      "A".repeat(23), // too long
+      "A".repeat(21) + "+", // base64 non-url char
+      "A".repeat(21) + "=", // padding
+    ];
+    for (const bad of cases) {
+      expect(
+        EventSchema.safeParse({
+          type: "ItemArchived",
+          ...envelope,
+          clientNonce: bad,
+          data: { itemId: "i1" },
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("accepts clientNonce in the [A-Za-z0-9_-]{22} alphabet", () => {
+    const okNonces = ["A".repeat(22), "abcdefghijklmnopqrstuv", "Aa0-_Aa0-_Aa0-_Aa0-_Aa"];
+    for (const good of okNonces) {
+      expect(
+        EventSchema.safeParse({
+          type: "ItemArchived",
+          ...envelope,
+          clientNonce: good,
+          data: { itemId: "i1" },
+        }).success,
+      ).toBe(true);
+    }
   });
 
   it("rejects negative seq", () => {
@@ -530,6 +579,7 @@ describe("PendingEventSchema (outbound, pre-relay)", () => {
   const pendingEnvelope = {
     deviceId: "device-abc",
     timestamp: 1_700_000_000_000,
+    clientNonce: CLIENT_NONCE,
   };
 
   it("parses a pending event with no seq", () => {
@@ -612,6 +662,7 @@ describe("PendingEventSchema (outbound, pre-relay)", () => {
         type: "ItemArchived",
         deviceId: envelope.deviceId,
         timestamp: envelope.timestamp,
+        clientNonce: envelope.clientNonce,
         data: { itemId: "i1" },
       });
     }
@@ -622,6 +673,7 @@ describe("PendingEventSchema (outbound, pre-relay)", () => {
       type: "ItemSaved" as const,
       deviceId: "d1",
       timestamp: 1,
+      clientNonce: CLIENT_NONCE,
       data: {
         itemId: "i1",
         url: "https://example.com",
@@ -637,6 +689,7 @@ describe("PendingEventSchema (outbound, pre-relay)", () => {
         type: "ItemArchived",
         deviceId: "d1",
         timestamp: 1,
+        clientNonce: CLIENT_NONCE,
         data: { itemId: "i1" },
       }).success,
     ).toBe(true);

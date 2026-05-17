@@ -28,14 +28,15 @@ function rangeBytes(length: number, start = 0, step = 1, mod = 256): Uint8Array 
 // These vectors document the wire format for cross-implementation parity:
 // libsodium-wrappers-sumo (this package), react-native-libsodium (Phase 5),
 // and dryoc (Phase 3) must all produce/accept identical ciphertexts.
-// AAD is serialized as: vaultId(16) || deviceId(16) || seq(uint64 BE).
+// AAD is serialized as: vaultId(16) || deviceId(16) || clientNonce(16) — pinned
+// by ADR-0006 §4. Total AAD length is 48 bytes.
 interface AeadVector {
   name: string;
   vaultKey: Uint8Array;
   nonce: Uint8Array;
   vaultId: Uint8Array;
   deviceId: Uint8Array;
-  seq: number;
+  clientNonce: Uint8Array;
   plaintext: Uint8Array;
   ciphertextHex: string;
 }
@@ -47,37 +48,41 @@ const aeadVectors: AeadVector[] = [
     nonce: rangeBytes(24, 0x40),
     vaultId: new Uint8Array(16).fill(0xaa),
     deviceId: new Uint8Array(16).fill(0xbb),
-    seq: 0,
+    clientNonce: new Uint8Array(16).fill(0x11),
     plaintext: new Uint8Array(0),
-    ciphertextHex: "d351b7683273d49510cd0e8cd38a5dc8",
+    ciphertextHex: "f6134bf8a207414d6bd8397dece4745e",
   },
   {
-    name: "short ASCII plaintext, mid-range seq",
+    name: "short ASCII plaintext, mid-entropy nonce",
     vaultKey: rangeBytes(32, 0, 7),
     nonce: rangeBytes(24, 0, 11),
     vaultId: rangeBytes(16),
     deviceId: rangeBytes(16, 0x80),
-    seq: 0x0102030405,
+    clientNonce: rangeBytes(16, 0x10, 3),
     plaintext: new TextEncoder().encode("defer test vector"),
-    ciphertextHex: "73c43676cffe822c4f3fd8a348c6238b3e4e506dfa53057e20e216613f30f0adca",
+    ciphertextHex: "73c43676cffe822c4f3fd8a348c6238b3e2a6dabcaf68afb4c68c01b676fcd238d",
   },
   {
-    name: "100-byte payload at uint32 boundary seq",
+    name: "100-byte payload, fixed-fill inputs",
     vaultKey: new Uint8Array(32).fill(0x55),
     nonce: new Uint8Array(24).fill(0x33),
     vaultId: new Uint8Array(16).fill(0xcc),
     deviceId: new Uint8Array(16).fill(0xdd),
-    seq: 0xffffffff,
+    clientNonce: new Uint8Array(16).fill(0xee),
     plaintext: rangeBytes(100),
     ciphertextHex:
-      "ad9920f2d6d062db926832450f8eebbebe249b5841b30bb617cda89bfe5f215eab4ae620ed7c78472f55ad8c514c4c6a1408a1a3c1d988a73d40f55fd85f2b2e8b4818ff1b8585ebfa8e77977d5a2d08f10dbd9888a75c14f096bdfd796f1df08e128cf930a1e45e7428c53f2ae5afd2e8e06d21",
+      "ad9920f2d6d062db926832450f8eebbebe249b5841b30bb617cda89bfe5f215eab4ae620ed7c78472f55ad8c514c4c6a1408a1a3c1d988a73d40f55fd85f2b2e8b4818ff1b8585ebfa8e77977d5a2d08f10dbd9888a75c14f096bdfd796f1df08e128cf94aa3142f8c14b59f669942c42f2349ac",
   },
 ];
 
 describe("AEAD golden vectors (cross-implementation parity)", () => {
   for (const v of aeadVectors) {
     it(`encrypts ${v.name} to the documented ciphertext`, () => {
-      const ad = encodeEventAad({ vaultId: v.vaultId, deviceId: v.deviceId, seq: v.seq });
+      const ad = encodeEventAad({
+        vaultId: v.vaultId,
+        deviceId: v.deviceId,
+        clientNonce: v.clientNonce,
+      });
       const ct = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
         v.plaintext,
         ad,
@@ -93,7 +98,7 @@ describe("AEAD golden vectors (cross-implementation parity)", () => {
         vaultKey: v.vaultKey,
         nonce: v.nonce,
         ciphertext: hex(v.ciphertextHex),
-        aad: { vaultId: v.vaultId, deviceId: v.deviceId, seq: v.seq },
+        aad: { vaultId: v.vaultId, deviceId: v.deviceId, clientNonce: v.clientNonce },
       });
       expect(out).toEqual(v.plaintext);
     });

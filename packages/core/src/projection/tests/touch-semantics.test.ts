@@ -3,13 +3,17 @@ import { describe, expect, it } from "vitest";
 import { apply, initialVaultState } from "../index.js";
 import type { Event } from "../../events/index.js";
 
+// 22-char base64url placeholder for the 16-byte `clientNonce` (ADR-0006 §4.1).
+const CLIENT_NONCE = "AAAAAAAAAAAAAAAAAAAAAA";
+
 const env = (
   seq: number,
-  overrides: Partial<{ deviceId: string; timestamp: number }> = {},
-): { seq: number; deviceId: string; timestamp: number } => ({
+  overrides: Partial<{ deviceId: string; timestamp: number; clientNonce: string }> = {},
+): { seq: number; deviceId: string; timestamp: number; clientNonce: string } => ({
   seq,
   deviceId: "device-abc",
   timestamp: 1_700_000_000_000,
+  clientNonce: CLIENT_NONCE,
   ...overrides,
 });
 

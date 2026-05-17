@@ -20,11 +20,15 @@ function deviceId(): Uint8Array {
   return new Uint8Array(16).fill(0xbb);
 }
 
+function clientNonce(fill = 0xcc): Uint8Array {
+  return new Uint8Array(16).fill(fill);
+}
+
 describe("encryptEvent / decryptEvent", () => {
   it("round-trips plaintext with matching AAD", () => {
     const vaultKey = generateVaultKey();
     const plaintext = new TextEncoder().encode("hello defer");
-    const aad = { vaultId: vaultId(), deviceId: deviceId(), seq: 1 };
+    const aad = { vaultId: vaultId(), deviceId: deviceId(), clientNonce: clientNonce(0x01) };
 
     const { nonce, ciphertext } = encryptEvent({ vaultKey, plaintext, aad });
     const out = decryptEvent({ vaultKey, nonce, ciphertext, aad });
@@ -35,7 +39,7 @@ describe("encryptEvent / decryptEvent", () => {
   it("returns a 24-byte nonce and a ciphertext longer than the plaintext (auth tag attached)", () => {
     const vaultKey = generateVaultKey();
     const plaintext = new Uint8Array(64);
-    const aad = { vaultId: vaultId(), deviceId: deviceId(), seq: 0 };
+    const aad = { vaultId: vaultId(), deviceId: deviceId(), clientNonce: clientNonce(0x02) };
 
     const { nonce, ciphertext } = encryptEvent({ vaultKey, plaintext, aad });
 
@@ -46,7 +50,7 @@ describe("encryptEvent / decryptEvent", () => {
   it("uses a fresh random nonce per encrypt call", () => {
     const vaultKey = generateVaultKey();
     const plaintext = new TextEncoder().encode("same message");
-    const aad = { vaultId: vaultId(), deviceId: deviceId(), seq: 7 };
+    const aad = { vaultId: vaultId(), deviceId: deviceId(), clientNonce: clientNonce(0x03) };
 
     const a = encryptEvent({ vaultKey, plaintext, aad });
     const b = encryptEvent({ vaultKey, plaintext, aad });
@@ -58,7 +62,7 @@ describe("encryptEvent / decryptEvent", () => {
   it("throws when AAD vaultId is tampered (relay reorder defence)", () => {
     const vaultKey = generateVaultKey();
     const plaintext = new TextEncoder().encode("payload");
-    const aad = { vaultId: vaultId(), deviceId: deviceId(), seq: 42 };
+    const aad = { vaultId: vaultId(), deviceId: deviceId(), clientNonce: clientNonce(0x04) };
 
     const { nonce, ciphertext } = encryptEvent({ vaultKey, plaintext, aad });
 
@@ -71,7 +75,7 @@ describe("encryptEvent / decryptEvent", () => {
   it("throws when AAD deviceId is tampered", () => {
     const vaultKey = generateVaultKey();
     const plaintext = new Uint8Array([1, 2, 3]);
-    const aad = { vaultId: vaultId(), deviceId: deviceId(), seq: 1 };
+    const aad = { vaultId: vaultId(), deviceId: deviceId(), clientNonce: clientNonce(0x05) };
 
     const { nonce, ciphertext } = encryptEvent({ vaultKey, plaintext, aad });
 
@@ -81,21 +85,24 @@ describe("encryptEvent / decryptEvent", () => {
     expect(() => decryptEvent({ vaultKey, nonce, ciphertext, aad: tampered })).toThrow();
   });
 
-  it("throws when AAD seq is tampered", () => {
+  it("throws when AAD clientNonce is tampered (replay defence)", () => {
     const vaultKey = generateVaultKey();
     const plaintext = new Uint8Array([9, 9, 9]);
-    const aad = { vaultId: vaultId(), deviceId: deviceId(), seq: 1 };
+    const aad = { vaultId: vaultId(), deviceId: deviceId(), clientNonce: clientNonce(0x06) };
 
     const { nonce, ciphertext } = encryptEvent({ vaultKey, plaintext, aad });
 
-    expect(() => decryptEvent({ vaultKey, nonce, ciphertext, aad: { ...aad, seq: 2 } })).toThrow();
+    const tampered = { ...aad, clientNonce: new Uint8Array(aad.clientNonce) };
+    tampered.clientNonce[0]! ^= 0x01;
+
+    expect(() => decryptEvent({ vaultKey, nonce, ciphertext, aad: tampered })).toThrow();
   });
 
   it("throws when decrypted with a different vault key", () => {
     const vaultKey = generateVaultKey();
     const wrongKey = generateVaultKey();
     const plaintext = new TextEncoder().encode("secret");
-    const aad = { vaultId: vaultId(), deviceId: deviceId(), seq: 0 };
+    const aad = { vaultId: vaultId(), deviceId: deviceId(), clientNonce: clientNonce(0x07) };
 
     const { nonce, ciphertext } = encryptEvent({ vaultKey, plaintext, aad });
 
@@ -105,7 +112,7 @@ describe("encryptEvent / decryptEvent", () => {
   it("throws when ciphertext is bit-flipped", () => {
     const vaultKey = generateVaultKey();
     const plaintext = new TextEncoder().encode("integrity matters");
-    const aad = { vaultId: vaultId(), deviceId: deviceId(), seq: 3 };
+    const aad = { vaultId: vaultId(), deviceId: deviceId(), clientNonce: clientNonce(0x08) };
 
     const { nonce, ciphertext } = encryptEvent({ vaultKey, plaintext, aad });
     const corrupted = new Uint8Array(ciphertext);
@@ -122,7 +129,7 @@ describe("encryptEvent / decryptEvent", () => {
       encryptEvent({
         vaultKey: new Uint8Array(16),
         plaintext,
-        aad: { vaultId: vaultId(), deviceId: deviceId(), seq: 0 },
+        aad: { vaultId: vaultId(), deviceId: deviceId(), clientNonce: clientNonce() },
       }),
     ).toThrow(/32-byte/);
 
@@ -130,7 +137,7 @@ describe("encryptEvent / decryptEvent", () => {
       encryptEvent({
         vaultKey,
         plaintext,
-        aad: { vaultId: new Uint8Array(8), deviceId: deviceId(), seq: 0 },
+        aad: { vaultId: new Uint8Array(8), deviceId: deviceId(), clientNonce: clientNonce() },
       }),
     ).toThrow(/vaultId/);
 
@@ -138,7 +145,7 @@ describe("encryptEvent / decryptEvent", () => {
       encryptEvent({
         vaultKey,
         plaintext,
-        aad: { vaultId: vaultId(), deviceId: new Uint8Array(8), seq: 0 },
+        aad: { vaultId: vaultId(), deviceId: new Uint8Array(8), clientNonce: clientNonce() },
       }),
     ).toThrow(/deviceId/);
 
@@ -146,20 +153,22 @@ describe("encryptEvent / decryptEvent", () => {
       encryptEvent({
         vaultKey,
         plaintext,
-        aad: { vaultId: vaultId(), deviceId: deviceId(), seq: -1 },
+        aad: { vaultId: vaultId(), deviceId: deviceId(), clientNonce: new Uint8Array(8) },
       }),
-    ).toThrow(/seq/);
+    ).toThrow(/clientNonce/);
   });
 
-  it("encodeEventAad serializes seq as big-endian uint64", () => {
+  it("encodeEventAad concatenates vaultId || deviceId || clientNonce (16+16+16)", () => {
     const encoded = encodeEventAad({
-      vaultId: new Uint8Array(16),
-      deviceId: new Uint8Array(16),
-      seq: 0x0102030405,
+      vaultId: new Uint8Array(16).fill(0x11),
+      deviceId: new Uint8Array(16).fill(0x22),
+      clientNonce: new Uint8Array(16).fill(0x33),
     });
 
-    expect(encoded.length).toBe(16 + 16 + 8);
-    expect(Array.from(encoded.slice(32))).toEqual([0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05]);
+    expect(encoded.length).toBe(16 + 16 + 16);
+    expect(Array.from(encoded.slice(0, 16))).toEqual(Array(16).fill(0x11));
+    expect(Array.from(encoded.slice(16, 32))).toEqual(Array(16).fill(0x22));
+    expect(Array.from(encoded.slice(32, 48))).toEqual(Array(16).fill(0x33));
   });
 
   it("generates distinct device ids across calls", () => {

@@ -45,6 +45,8 @@ const TAGS = ["alpha", "beta", "gamma"] as const;
 const DEVICE_IDS = ["dev-a", "dev-b"] as const;
 // Placeholder MAC. ADR-0006: base64url HMAC-SHA256 → 43 chars unpadded.
 const SIG = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+// 22-char base64url placeholder for the 16-byte `clientNonce` (ADR-0006 §4.1).
+const CLIENT_NONCE = "AAAAAAAAAAAAAAAAAAAAAA";
 
 const itemIdArb = fc.constantFrom(...ITEM_IDS);
 const tagArb = fc.constantFrom(...TAGS);
@@ -56,6 +58,7 @@ const eventBodyArb: fc.Arbitrary<Omit<Event, "seq">> = fc.oneof(
     fc.record({
       type: fc.constant("ItemSaved" as const),
       deviceId: fc.constant("device-abc"),
+      clientNonce: fc.constant(CLIENT_NONCE),
       timestamp: fc.integer({ min: 1, max: 10_000 }),
       data: fc.record({
         itemId: fc.constant(itemId),
@@ -75,18 +78,21 @@ const eventBodyArb: fc.Arbitrary<Omit<Event, "seq">> = fc.oneof(
       "ItemDeleted" as const,
     ),
     deviceId: fc.constant("device-abc"),
+    clientNonce: fc.constant(CLIENT_NONCE),
     timestamp: fc.integer({ min: 1, max: 10_000 }),
     data: fc.record({ itemId: itemIdArb }),
   }),
   fc.record({
     type: fc.constantFrom("ItemTagged" as const, "ItemUntagged" as const),
     deviceId: fc.constant("device-abc"),
+    clientNonce: fc.constant(CLIENT_NONCE),
     timestamp: fc.integer({ min: 1, max: 10_000 }),
     data: fc.record({ itemId: itemIdArb, tag: tagArb }),
   }),
   fc.record({
     type: fc.constant("ItemTitleEdited" as const),
     deviceId: fc.constant("device-abc"),
+    clientNonce: fc.constant(CLIENT_NONCE),
     timestamp: fc.integer({ min: 1, max: 10_000 }),
     data: fc.record({
       itemId: itemIdArb,
@@ -97,6 +103,7 @@ const eventBodyArb: fc.Arbitrary<Omit<Event, "seq">> = fc.oneof(
     fc.record({
       type: fc.constant("DeviceRegistered" as const),
       deviceId: fc.constant("device-abc"),
+      clientNonce: fc.constant(CLIENT_NONCE),
       timestamp: fc.integer({ min: 1, max: 10_000 }),
       data: fc.record({
         deviceId: fc.constant(deviceId),
@@ -109,6 +116,7 @@ const eventBodyArb: fc.Arbitrary<Omit<Event, "seq">> = fc.oneof(
   fc.record({
     type: fc.constant("DeviceRevoked" as const),
     deviceId: fc.constant("device-abc"),
+    clientNonce: fc.constant(CLIENT_NONCE),
     timestamp: fc.integer({ min: 1, max: 10_000 }),
     data: fc.record({ deviceId: deviceIdArb }),
   }),
@@ -149,6 +157,7 @@ describe("projection — property: seq order matters for non-commutative events"
           type: "ItemSaved",
           seq: 1,
           deviceId: "device-abc",
+          clientNonce: CLIENT_NONCE,
           timestamp: ts,
           data: {
             itemId,
@@ -162,6 +171,7 @@ describe("projection — property: seq order matters for non-commutative events"
           type: "ItemArchived",
           seq: 2,
           deviceId: "device-abc",
+          clientNonce: CLIENT_NONCE,
           timestamp: ts + 1,
           data: { itemId },
         };
@@ -210,6 +220,7 @@ describe("projection — property: tag/like idempotency & commutativity", () => 
           type: "ItemSaved",
           seq: 1,
           deviceId: "device-abc",
+          clientNonce: CLIENT_NONCE,
           timestamp: 1,
           data: {
             itemId,
@@ -223,6 +234,7 @@ describe("projection — property: tag/like idempotency & commutativity", () => 
           type: "ItemTagged",
           seq: 2,
           deviceId: "device-abc",
+          clientNonce: CLIENT_NONCE,
           timestamp: 2,
           data: { itemId, tag },
         });
@@ -232,6 +244,7 @@ describe("projection — property: tag/like idempotency & commutativity", () => 
             type: "ItemTagged",
             seq: 2 + i,
             deviceId: "device-abc",
+            clientNonce: CLIENT_NONCE,
             timestamp: 2 + i,
             data: { itemId, tag },
           });
@@ -249,6 +262,7 @@ describe("projection — property: tag/like idempotency & commutativity", () => 
           type: "ItemSaved",
           seq: 1,
           deviceId: "device-abc",
+          clientNonce: CLIENT_NONCE,
           timestamp: 1,
           data: {
             itemId,
@@ -262,6 +276,7 @@ describe("projection — property: tag/like idempotency & commutativity", () => 
           type: "ItemLiked",
           seq: 2,
           deviceId: "device-abc",
+          clientNonce: CLIENT_NONCE,
           timestamp: 2,
           data: { itemId },
         });
@@ -271,6 +286,7 @@ describe("projection — property: tag/like idempotency & commutativity", () => 
             type: "ItemLiked",
             seq: 2 + i,
             deviceId: "device-abc",
+            clientNonce: CLIENT_NONCE,
             timestamp: 2 + i,
             data: { itemId },
           });
@@ -304,6 +320,7 @@ describe("projection — property: tag/like idempotency & commutativity", () => 
           type: "ItemSaved",
           seq: 1,
           deviceId: "device-abc",
+          clientNonce: CLIENT_NONCE,
           timestamp: 1,
           data: {
             itemId,
@@ -319,6 +336,7 @@ describe("projection — property: tag/like idempotency & commutativity", () => 
             type: "ItemTagged",
             seq: 100,
             deviceId: "device-abc",
+            clientNonce: CLIENT_NONCE,
             timestamp: 100,
             data: { itemId, tag },
           },
@@ -326,6 +344,7 @@ describe("projection — property: tag/like idempotency & commutativity", () => 
             type: "ItemLiked",
             seq: 101,
             deviceId: "device-abc",
+            clientNonce: CLIENT_NONCE,
             timestamp: 101,
             data: { itemId },
           },
@@ -339,6 +358,7 @@ describe("projection — property: tag/like idempotency & commutativity", () => 
                 ...p,
                 seq: 2 + i,
                 deviceId: "device-abc",
+                clientNonce: CLIENT_NONCE,
                 timestamp: 2 + i,
               }) as Event,
           ),
@@ -358,6 +378,7 @@ describe("projection — property: tag/like idempotency & commutativity", () => 
           type: "VaultDeleted",
           seq: 1,
           deviceId: "device-abc",
+          clientNonce: CLIENT_NONCE,
           timestamp: 1,
           signature: SIG,
           data: { deletedAt: 1 },

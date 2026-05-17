@@ -31,13 +31,29 @@ import { z } from "zod";
  */
 export const RELAY_DEVICE_ID = "relay";
 
+// `clientNonce` on the wire: 16 random bytes, base64url-encoded without padding
+// (22 chars). Pinned by ADR-0006 §4.1. The same value is fed in raw form into
+// the AEAD AAD (`vaultId || deviceId || clientNonce`) so the relay cannot swap
+// ciphertext blobs across events. The relay enforces uniqueness of
+// `(deviceId, clientNonce)` per vault (ADR-0006 §4.2 — implemented in the
+// events-push endpoint, not in this scaffold).
+const CLIENT_NONCE_REGEX = /^[A-Za-z0-9_-]{22}$/;
+
+const clientNonceField = {
+  clientNonce: z.string().regex(CLIENT_NONCE_REGEX, {
+    message: "clientNonce must be 16 random bytes base64url-encoded (22 chars, no padding)",
+  }),
+};
+
 // Pending (outbound) envelope: the shape clients emit before the relay has
 // assigned a `seq`. Per ADR-0002, the relay assigns a monotonic `seq` per
 // vault on arrival, so locally queued events and `relayClient.post(...)`
-// payloads have no `seq` yet.
+// payloads have no `seq` yet. Per ADR-0006 §4.1 the envelope carries a
+// client-chosen 16-byte `clientNonce` (cleartext) that the AEAD AAD binds to.
 export const pendingEnvelopeFields = {
   deviceId: z.string().min(1),
   timestamp: z.number().int().nonnegative(),
+  ...clientNonceField,
 };
 
 // Inbound (sequenced) envelope: the shape returned by the relay, with the
