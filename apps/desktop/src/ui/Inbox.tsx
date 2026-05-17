@@ -11,9 +11,10 @@ import { EmptyInbox } from "./EmptyInbox.js";
 type InboxProps = {
   projection: VaultProjectionStore;
   commands: VaultCommands;
+  onRefresh: () => void;
 };
 
-export function Inbox({ projection, commands }: InboxProps) {
+export function Inbox({ projection, commands, onRefresh }: InboxProps) {
   const items = useProjectionItems(projection);
 
   async function handleSave(url: string) {
@@ -26,7 +27,16 @@ export function Inbox({ projection, commands }: InboxProps) {
 
   return (
     <div className="screen col">
-      <h1>Inbox</h1>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <h1>Inbox</h1>
+        <button
+          className="secondary"
+          onClick={onRefresh}
+          aria-label="Refresh — pull latest events from the relay"
+        >
+          Refresh
+        </button>
+      </div>
       <SaveBar onSave={handleSave} />
       {items.length === 0 ? (
         <EmptyInbox onContinue={() => void 0} />

@@ -1,14 +1,34 @@
+import { z } from "zod";
+
 import {
   ErrorEnvelopeSchema,
-  PullEventsResponseSchema,
   PushEventsRequestSchema,
   PushEventsResponseSchema,
-  type PullEventsResponse,
   type PushEventsResponse,
 } from "../relay-protocol/index.js";
 import type { PendingEvent } from "../events/index.js";
 
 import { RelayError, RelayProtocolError, RelayResponseShapeError } from "./errors.js";
+
+/**
+ * Permissive pull-response envelope used by the client. The relay validates
+ * events strictly when serving (via `PullEventsResponseSchema` in
+ * `relay-protocol/wire.ts`), but the *client* deliberately defers per-event
+ * validation to `InboundReplay`. Two reasons:
+ *
+ * - Forward-compat with new event types added to a newer relay before the
+ *   client catches up — per ADR-0002, unknown event types must be silently
+ *   skipped by the reducer; strict client-side validation here would
+ *   abort the whole pull on the first unknown type, defeating that.
+ * - Isolation of a single malformed event from the rest of the page —
+ *   if one event fails our schema, the others should still apply.
+ */
+const PullEventsResponseEnvelopeSchema = z.object({
+  events: z.array(z.unknown()),
+  nextSince: z.number().int().nonnegative().nullable(),
+});
+
+export type PullEventsRawResponse = z.infer<typeof PullEventsResponseEnvelopeSchema>;
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -84,13 +104,13 @@ export class RelayClient {
    * (`MAX_PAGE_SIZE` per `relay-protocol/wire.ts`). When `nextSince` in the
    * response is non-null the caller should keep paging from that value.
    */
-  async pullEvents(since: number): Promise<PullEventsResponse> {
+  async pullEvents(since: number): Promise<PullEventsRawResponse> {
     if (!Number.isInteger(since) || since < 0) {
       throw new RangeError("RelayClient.pullEvents: since must be a non-negative integer");
     }
     const url = `/v1/vault/${this.#vaultId}/events?since=${since}`;
     const response = await this.#request(url, { method: "GET" });
-    return this.#decode(response, PullEventsResponseSchema);
+    return this.#decode(response, PullEventsResponseEnvelopeSchema);
   }
 
   async #request(path: string, init: RequestInit): Promise<Response> {

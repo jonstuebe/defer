@@ -33,6 +33,10 @@
     "./outbound-flush": {
       "types": "./src/outbound-flush/index.ts",
       "default": "./src/outbound-flush/index.ts"
+    },
+    "./inbound-replay": {
+      "types": "./src/inbound-replay/index.ts",
+      "default": "./src/inbound-replay/index.ts"
     }
   },
   "scripts": {
