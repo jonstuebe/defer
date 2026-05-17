@@ -65,3 +65,45 @@ export const PullEventsResponseSchema = z.object({
   nextSince: z.number().int().nonnegative().nullable(),
 });
 export type PullEventsResponse = z.infer<typeof PullEventsResponseSchema>;
+
+// --- Device-list management (issue #27) ----------------------------------
+//
+// Per-vault device-auth-token registration and revocation. `deviceId` and
+// `deviceAuthToken` are both 16-byte random values rendered as 22-char
+// base64url, matching the envelope `deviceId` format (ADR-0006 §4.1) and the
+// bearer-token format used elsewhere. The closed regex is enforced both at
+// the client (so a malformed token never leaves the device) and at the relay
+// (so a malformed token never touches DO storage).
+
+/** 22-char base64url — 16 bytes encoded with the URL-safe alphabet. */
+const DEVICE_ID_REGEX = /^[A-Za-z0-9_-]{22}$/;
+
+/**
+ * Body shape for `POST /v1/vault/:vaultId/devices`. Registers a new device's
+ * `deviceAuthToken` for this vault. The bearer on the request must be an
+ * existing valid token for the vault (pairing flow: the already-paired
+ * device sponsors the new one).
+ */
+export const RegisterDeviceRequestSchema = z
+  .object({
+    deviceId: z.string().regex(DEVICE_ID_REGEX),
+    deviceAuthToken: z.string().regex(DEVICE_ID_REGEX),
+  })
+  .strict();
+export type RegisterDeviceRequest = z.infer<typeof RegisterDeviceRequestSchema>;
+
+/**
+ * Response shape for `POST /v1/vault/:vaultId/devices`. The relay does not
+ * echo back any state — the request body already carries everything the
+ * client needs. `{ ok: true }` is a sentinel so the response is shape-checked
+ * at the client boundary like every other relay response.
+ */
+export const RegisterDeviceResponseSchema = z.object({ ok: z.literal(true) });
+export type RegisterDeviceResponse = z.infer<typeof RegisterDeviceResponseSchema>;
+
+/**
+ * Response shape for `DELETE /v1/vault/:vaultId/devices/:deviceId`. Mirrors
+ * `RegisterDeviceResponseSchema` — same `{ ok: true }` sentinel.
+ */
+export const RevokeDeviceResponseSchema = z.object({ ok: z.literal(true) });
+export type RevokeDeviceResponse = z.infer<typeof RevokeDeviceResponseSchema>;

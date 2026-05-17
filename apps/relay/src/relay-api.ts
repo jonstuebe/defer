@@ -35,12 +35,18 @@ function getVaultStub(env: Env, vaultId: string) {
 async function forwardToDurableObject(
   c: Context<{ Bindings: Env; Variables: Variables }>,
   vaultId: string,
+  innerPath: string,
 ): Promise<Response> {
   const stub = getVaultStub(c.env, vaultId);
 
   // Re-issue the request against a synthetic URL the DO's switch matches on.
   // We MUST forward the original body (POST events) and `Authorization`
   // header, plus the query string so `?since=` survives.
+  //
+  // `innerPath` is the path the DO's dispatcher sees (e.g. `/events`,
+  // `/devices`, `/devices/<deviceId>`). The Worker route strips the
+  // `/v1/vault/:vaultId` prefix and rewrites to the inner path so the DO
+  // doesn't have to know the public URL shape.
   //
   // Reading the body as an ArrayBuffer first (rather than streaming) buys
   // type-system compatibility with `stub.fetch`'s Cloudflare-typed Request:
@@ -50,7 +56,7 @@ async function forwardToDurableObject(
   // bytes each, well under any meaningful budget.
   const original = c.req.raw;
   const incomingUrl = new URL(original.url);
-  const innerUrl = new URL(`https://do.invalid/events`);
+  const innerUrl = new URL(`https://do.invalid${innerPath}`);
   innerUrl.search = incomingUrl.search;
 
   const hasBody = original.method !== "GET" && original.method !== "HEAD";
@@ -139,11 +145,29 @@ export function createApp(env: Env): Hono<{ Bindings: Env; Variables: Variables 
   // as thin forwarders here means future per-route concerns (rate limiting in
   // #32, observability hooks) can live in the Worker tier without touching
   // the DO.
-  app.post("/v1/vault/:vaultId/events", (c) => forwardToDurableObject(c, c.req.param("vaultId")));
-  app.get("/v1/vault/:vaultId/events", (c) => forwardToDurableObject(c, c.req.param("vaultId")));
+  app.post("/v1/vault/:vaultId/events", (c) =>
+    forwardToDurableObject(c, c.req.param("vaultId"), "/events"),
+  );
+  app.get("/v1/vault/:vaultId/events", (c) =>
+    forwardToDurableObject(c, c.req.param("vaultId"), "/events"),
+  );
 
-  // Remaining skeleton vault-routes (devices, pair, schedule-deletion, ...)
-  // land in #27, #28, #29. Until then they 404 with the canonical envelope.
+  // Device-list endpoints (issue #27). Same forwarder pattern; the DO
+  // dispatches on method + path. `:deviceId` is opaque to the Worker —
+  // the DO's schema check validates the base64url shape.
+  app.post("/v1/vault/:vaultId/devices", (c) =>
+    forwardToDurableObject(c, c.req.param("vaultId"), "/devices"),
+  );
+  app.delete("/v1/vault/:vaultId/devices/:deviceId", (c) =>
+    forwardToDurableObject(
+      c,
+      c.req.param("vaultId"),
+      `/devices/${encodeURIComponent(c.req.param("deviceId"))}`,
+    ),
+  );
+
+  // Remaining skeleton vault-routes (pair, schedule-deletion, ...)
+  // land in #28, #29. Until then they 404 with the canonical envelope.
   app.all("/v1/vault/:vaultId", () => {
     throw unknownVault();
   });

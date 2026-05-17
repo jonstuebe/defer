@@ -6,6 +6,9 @@ import {
   PullEventsResponseSchema,
   PushEventsRequestSchema,
   PushEventsResponseSchema,
+  RegisterDeviceRequestSchema,
+  RegisterDeviceResponseSchema,
+  RevokeDeviceResponseSchema,
 } from "../index.js";
 
 // 22-char base64url placeholder for the 16-byte `clientNonce` (ADR-0006 §4.1).
@@ -164,5 +167,85 @@ describe("PullEventsResponseSchema", () => {
     // Schema doesn't enforce semantics; the relay does. Both forms parse.
     const result = PullEventsResponseSchema.safeParse({ events: [], nextSince: 7 });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("RegisterDeviceRequestSchema", () => {
+  // 22-char base64url placeholders for `deviceId` / `deviceAuthToken`. Both
+  // are 16 random bytes encoded with the URL-safe alphabet (ADR-0003 +
+  // ADR-0006 §4.1). All-letter strings are valid base64url and parse.
+  const DEVICE_ID = "AAAAAAAAAAAAAAAAAAAAAA";
+  const TOKEN = "BBBBBBBBBBBBBBBBBBBBBB";
+
+  it("parses a real example", () => {
+    const result = RegisterDeviceRequestSchema.safeParse({
+      deviceId: DEVICE_ID,
+      deviceAuthToken: TOKEN,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a 21-char deviceId", () => {
+    const result = RegisterDeviceRequestSchema.safeParse({
+      deviceId: "A".repeat(21),
+      deviceAuthToken: TOKEN,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a 23-char deviceAuthToken", () => {
+    const result = RegisterDeviceRequestSchema.safeParse({
+      deviceId: DEVICE_ID,
+      deviceAuthToken: "A".repeat(23),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects non-base64url characters in deviceId", () => {
+    // `+` and `/` are the standard-base64 chars that base64url replaces with
+    // `-` and `_`; rejecting them is the load-bearing test for `.strict()`.
+    const result = RegisterDeviceRequestSchema.safeParse({
+      deviceId: "AAAAAAAAAAAAAAAAAAAAA+",
+      deviceAuthToken: TOKEN,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects requests missing deviceAuthToken", () => {
+    const result = RegisterDeviceRequestSchema.safeParse({ deviceId: DEVICE_ID });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects requests with extra fields (.strict())", () => {
+    const result = RegisterDeviceRequestSchema.safeParse({
+      deviceId: DEVICE_ID,
+      deviceAuthToken: TOKEN,
+      extra: "nope",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("RegisterDeviceResponseSchema", () => {
+  it("parses { ok: true }", () => {
+    const result = RegisterDeviceResponseSchema.safeParse({ ok: true });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects { ok: false }", () => {
+    const result = RegisterDeviceResponseSchema.safeParse({ ok: false });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("RevokeDeviceResponseSchema", () => {
+  it("parses { ok: true }", () => {
+    const result = RevokeDeviceResponseSchema.safeParse({ ok: true });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects { ok: false }", () => {
+    const result = RevokeDeviceResponseSchema.safeParse({ ok: false });
+    expect(result.success).toBe(false);
   });
 });
