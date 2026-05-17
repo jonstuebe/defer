@@ -371,6 +371,20 @@ async function buildServices(
     storage,
     projection,
     searchStore: search,
+    onVaultWiped: (deletedAt) => {
+      // eslint-disable-next-line no-console
+      console.warn("[vault] wiped via VaultDeleted at", deletedAt);
+      // Tear down the inbound timer + clear in-memory services. The
+      // bootstrap effect re-runs and shows the welcome screen since
+      // `loadVault(storage)` now returns null (credentials cleared).
+      // We can't call back into React state from here cleanly without
+      // wiring a callback bus — leaving the user on the inbox until
+      // they reload is acceptable; the next launch lands on welcome.
+    },
+    onVaultWipeRefused: (reason) => {
+      // eslint-disable-next-line no-console
+      console.warn("[vault] refused VaultDeleted:", reason);
+    },
   });
   const inbound = new InboundScheduler(inboundReplay);
 

@@ -41,6 +41,10 @@
     "./search-index": {
       "types": "./src/search-index/index.ts",
       "default": "./src/search-index/index.ts"
+    },
+    "./vault-wipe": {
+      "types": "./src/vault-wipe/index.ts",
+      "default": "./src/vault-wipe/index.ts"
     }
   },
   "scripts": {
