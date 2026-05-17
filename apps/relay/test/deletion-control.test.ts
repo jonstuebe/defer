@@ -341,14 +341,15 @@ describe("POST /v1/vault/:vaultId/schedule-deletion", () => {
 
     // The skew window deliberately permits a past `scheduledFor`, which means
     // `state.storage.setAlarm()` is called with a time already elapsed. In
-    // miniflare that fires the alarm immediately on the next tick. The alarm
-    // handler is a no-op in this PR (#30 wires up the real wipe), but the
-    // alarm-fire-during-test-teardown can race with vitest-pool-workers'
-    // isolated-storage cleanup. Cancel the alarm explicitly so the DO is
-    // quiescent when the test finishes.
+    // miniflare that fires the alarm immediately on the next tick. With #30
+    // landed, the alarm fires the real wipe + tombstone — by the time we try
+    // to cancel, the vault is already gone, so cancelDeletion returns 410
+    // VAULT_DELETED. Either 410 (alarm fired first) or 200 (cancel won the
+    // race) is a correct outcome; in practice on this runtime the alarm fires
+    // first because `setAlarm` with a past time is essentially "fire ASAP".
     const cancelled = makeCancel({ clientNonce: nonce() });
     const c = await cancelDeletion(vaultId, token, { cancelled });
-    expect(c.status).toBe(200);
+    expect([200, 410]).toContain(c.status);
   });
 
   it("already-scheduled → 409 DELETION_ALREADY_SCHEDULED", async () => {
