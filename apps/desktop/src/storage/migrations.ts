@@ -64,12 +64,30 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    name: "device-local-last-opened",
+    up(db) {
+      // Local-only "have I opened this URL?" signal — per CONTEXT.md,
+      // read-state is NOT an event and does NOT sync. The table lives in
+      // a separate `device_local_` namespace so a future `vaultWipe` can
+      // either include it (full wipe) or leave it (preserve "opened"
+      // bookmarks across vaults) without ambiguity. Keyed by `itemId`
+      // alone — no compound key needed since the projection itemIds are
+      // unique-per-device.
+      db.run(`
+        CREATE TABLE IF NOT EXISTS device_local_last_opened (
+          item_id TEXT PRIMARY KEY,
+          opened_at INTEGER NOT NULL
+        );
+      `);
+    },
+  },
   // FTS5 virtual table lives in slice #52 (local search) — sql.js's stock
   // wasm build omits the FTS5 extension, so the table can't be created
-  // today and the migration framework is what's "in place" instead. When
-  // #52 lands it will ship a sql.js build with FTS5 enabled (or a swap to
-  // tauri-plugin-sql) and append the `items_fts` migration here as
-  // version 2.
+  // today. When #52 lands it will ship a sql.js build with FTS5 enabled
+  // (or a swap to tauri-plugin-sql) and append the `items_fts` migration
+  // as version 3.
 ];
 
 export function applyMigrations(db: Database, now: number): void {

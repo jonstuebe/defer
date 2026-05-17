@@ -49,6 +49,20 @@ export interface StoragePort {
   setSetting(key: string, value: string): Promise<void>;
 
   /**
+   * Stamps the local-only "I opened this item" timestamp. Used for the
+   * dimming signal (PRD US #46) — per CONTEXT.md this is device-local
+   * and never emitted as an event. Idempotent: re-opening the same item
+   * overwrites with the newer timestamp.
+   */
+  markItemOpened(itemId: string, openedAt: number): Promise<void>;
+
+  /**
+   * Returns the device-local `lastOpenedAt` map. Used by the UI to apply
+   * dimmed styling to rows the user has already opened.
+   */
+  getLastOpenedTimestamps(): Promise<ReadonlyMap<string, number>>;
+
+  /**
    * Returns the raw database bytes for persistence. Adapter consumers
    * (Tauri filesystem, browser indexedDB, etc.) write these out.
    */

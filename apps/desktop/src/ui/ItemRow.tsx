@@ -3,14 +3,33 @@ import type { Item } from "@defer/core";
 type ItemRowProps = {
   item: Item;
   selected: boolean;
+  focused: boolean;
+  opened: boolean;
   onOpen: () => void;
   onToggleDetails: () => void;
 };
 
-export function ItemRow({ item, selected, onOpen, onToggleDetails }: ItemRowProps) {
+export function ItemRow({
+  item,
+  selected,
+  focused,
+  opened,
+  onOpen,
+  onToggleDetails,
+}: ItemRowProps) {
   const host = safeHostname(item.url);
   return (
-    <li className={`item-row with-button ${selected ? "selected" : ""}`}>
+    <li
+      className={[
+        "item-row",
+        "with-button",
+        selected ? "selected" : "",
+        focused ? "focused" : "",
+        opened ? "opened" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <button
         type="button"
         className="row-body"

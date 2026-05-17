@@ -10,6 +10,7 @@ import { SqlitePendingQueueStorage } from "../vault/pending-queue-adapter.js";
 import { decodePendingEvent } from "../vault/wire-codec.js";
 import { ensureDeviceAuthToken, getRelayBaseUrl } from "../vault/relay-config.js";
 import { InboundScheduler, makeInboundReplay } from "../vault/inbound.js";
+import { LastOpenedStore } from "../runtime/last-opened-store.js";
 import {
   createVault,
   persistVault,
@@ -42,6 +43,7 @@ export function App({ storage }: AppProps) {
     projection: VaultProjectionStore;
     commands: VaultCommands;
     inbound: InboundScheduler;
+    lastOpened: LastOpenedStore;
   } | null>(null);
 
   useEffect(() => {
@@ -127,6 +129,7 @@ export function App({ storage }: AppProps) {
     <MainView
       projection={services.projection}
       commands={services.commands}
+      lastOpened={services.lastOpened}
       onRefresh={() => services.inbound.triggerNow()}
     />
   );
@@ -139,6 +142,7 @@ async function buildServices(
   projection: VaultProjectionStore;
   commands: VaultCommands;
   inbound: InboundScheduler;
+  lastOpened: LastOpenedStore;
 }> {
   const projection = new VaultProjectionStore(storage);
   await projection.hydrate();
@@ -188,5 +192,8 @@ async function buildServices(
   const inboundReplay = makeInboundReplay({ client, storage, projection });
   const inbound = new InboundScheduler(inboundReplay);
 
-  return { projection, commands, inbound };
+  const lastOpened = new LastOpenedStore(storage);
+  await lastOpened.hydrate();
+
+  return { projection, commands, inbound, lastOpened };
 }
