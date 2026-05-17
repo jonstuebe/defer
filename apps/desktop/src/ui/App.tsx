@@ -100,6 +100,7 @@ export function App({ storage }: AppProps) {
     return (
       <MnemonicDisplay
         mnemonic={screen.vault.mnemonic}
+        vaultIdBytes={screen.vault.vaultId}
         onContinue={() => setScreen({ name: "create-mnemonic-verification", vault: screen.vault })}
       />
     );
