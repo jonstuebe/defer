@@ -60,6 +60,16 @@ export class VaultCommands {
     return this.#deps.deviceId;
   }
 
+  /**
+   * Exposes the pending queue so deletion / pairing flows (which live
+   * outside this class) can enqueue alongside the same write chain.
+   * They could each take a queue dep, but threading it through every
+   * caller is noisier than this getter.
+   */
+  getPendingQueue(): PendingEventQueue {
+    return this.#deps.pendingQueue;
+  }
+
   async save(rawUrl: string, opts: { title?: string; savedAt?: number } = {}): Promise<void> {
     const canonicalUrl = canonicalize(rawUrl);
     const timestamp = this.#deps.now();

@@ -190,6 +190,33 @@ input[type="url"] {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+.deletion-banner {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--danger);
+  color: white;
+}
+
+.deletion-banner button {
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.danger-confirm-input {
+  margin-top: 8px;
+  text-align: center;
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+}
+
 .device-list {
   list-style: none;
   padding: 0;
