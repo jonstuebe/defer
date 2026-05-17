@@ -10,6 +10,13 @@ const VAULT_ID_HKDF_SALT = Uint8Array.from("defer-vault-id", (c) => c.charCodeAt
 
 const WORDLIST_SET: ReadonlySet<string> = new Set(wordlist);
 
+/**
+ * Read-only view of the BIP-39 English wordlist. Re-exported so client
+ * packages (apps/desktop, etc.) can build autocomplete UIs without
+ * taking a direct dep on `@scure/bip39`.
+ */
+export const BIP39_ENGLISH_WORDLIST: readonly string[] = wordlist;
+
 function normalizeMnemonic(input: string): string {
   if (typeof input !== "string") {
     throw new TypeError("recoveryMnemonic: expected a string");

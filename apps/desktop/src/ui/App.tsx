@@ -25,12 +25,15 @@ import { MnemonicDisplay } from "./MnemonicDisplay.js";
 import { MnemonicVerification } from "./MnemonicVerification.js";
 import { EmptyInbox } from "./EmptyInbox.js";
 import { MainView } from "./MainView.js";
+import { RestoreFlow } from "./RestoreFlow.js";
+import { restoreFromMnemonic } from "../onboarding/restore-vault.js";
 
 type Screen =
   | { name: "loading" }
   | { name: "welcome" }
   | { name: "create-mnemonic-display"; vault: CreatedVault }
   | { name: "create-mnemonic-verification"; vault: CreatedVault }
+  | { name: "restore" }
   | { name: "empty-inbox" }
   | { name: "inbox" };
 
@@ -89,11 +92,7 @@ export function App({ storage }: AppProps) {
           const vault = await createVault();
           setScreen({ name: "create-mnemonic-display", vault });
         }}
-        onRestore={() => {
-          // Restore flow ships in slice #54. Acknowledge the click without
-          // pretending we have an implementation.
-          alert("Vault restoration ships in a later slice (#54).");
-        }}
+        onRestore={() => setScreen({ name: "restore" })}
       />
     );
   }
@@ -117,6 +116,29 @@ export function App({ storage }: AppProps) {
           built.inbound.start();
           setServices(built);
           setScreen({ name: "empty-inbox" });
+        }}
+      />
+    );
+  }
+  if (screen.name === "restore") {
+    return (
+      <RestoreFlow
+        onBack={() => setScreen({ name: "welcome" })}
+        onRestore={async (mnemonic) => {
+          const baseUrl = await getRelayBaseUrl(storage);
+          const { vault } = await restoreFromMnemonic(mnemonic, {
+            storage,
+            relayBaseUrl: baseUrl,
+          });
+          const built = await buildServices(storage, vault.deviceId);
+          built.inbound.start();
+          // Trigger an immediate pull to begin replay; the scheduler's
+          // `start()` already kicked one, but `triggerNow()` queues a
+          // trailing pull in case the first request was issued before
+          // the device-auth-token persisted (race-safe).
+          built.inbound.triggerNow();
+          setServices(built);
+          setScreen({ name: "inbox" });
         }}
       />
     );

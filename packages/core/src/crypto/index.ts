@@ -16,3 +16,9 @@ export {
   type PairingKeypair,
 } from "./pairing.js";
 export { signWithVaultKey, verifyVaultKeySignature } from "./signatures.js";
+export {
+  recoveryClaimCanonicalBytes,
+  computeRecoveryClaimMac,
+  verifyRecoveryClaimMac,
+  type RecoveryClaimMacInput,
+} from "./recovery-mac.js";

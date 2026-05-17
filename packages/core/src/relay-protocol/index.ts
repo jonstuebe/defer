@@ -24,6 +24,9 @@ export {
   ScheduleDeletionResponseSchema,
   CancelDeletionRequestSchema,
   CancelDeletionResponseSchema,
+  RecoveryChallengeResponseSchema,
+  RecoveryClaimRequestSchema,
+  RecoveryClaimResponseSchema,
   type PushEventsRequest,
   type PushEventsResponse,
   type PullEventsResponse,
@@ -36,4 +39,7 @@ export {
   type ScheduleDeletionResponse,
   type CancelDeletionRequest,
   type CancelDeletionResponse,
+  type RecoveryChallengeResponse,
+  type RecoveryClaimRequest,
+  type RecoveryClaimResponse,
 } from "./wire.js";
