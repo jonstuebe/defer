@@ -31,9 +31,13 @@ function freshToken(suffix: string): string {
 }
 
 function freshVaultId(): string {
+  // 22-char base64url (16 random bytes) — matches the production wire
+  // format and the router-boundary VAULT_ID_REGEX in `relay-api.ts`.
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function nonceGen(): () => string {

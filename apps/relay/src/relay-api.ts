@@ -6,7 +6,23 @@ import { cors } from "./middleware/cors.js";
 import { errorEnvelope } from "./middleware/error-envelope.js";
 import { logging } from "./middleware/logging.js";
 import { requestId } from "./middleware/request-id.js";
-import { unknownVault } from "./errors.js";
+import { schemaViolation, unknownVault } from "./errors.js";
+
+// `vaultId` on the wire is the 22-char base64url encoding of a 16-byte HKDF
+// output (ADR-0003 §"vault id derivation"). The closed regex matches the same
+// alphabet/length used everywhere else for base64url 16-byte values (e.g. the
+// `clientNonce` and `deviceId` envelope fields). Validating at the router
+// boundary catches malformed path params before they reach the DO and ensures
+// `SCHEMA_VIOLATION` is the response shape — the alternative ("treat any
+// string as a DO name") would let unguessable junk bind to bogus DOs.
+const VAULT_ID_REGEX = /^[A-Za-z0-9_-]{22}$/;
+
+function validateVaultId(raw: string): string {
+  if (!VAULT_ID_REGEX.test(raw)) {
+    throw schemaViolation("vaultId path param must be 22 base64url chars (16 bytes, no padding)");
+  }
+  return raw;
+}
 
 // Hono context variables surfaced by the middleware chain.
 type Variables = {
@@ -15,12 +31,12 @@ type Variables = {
 
 const VERSION = "0.0.0";
 
-// Vault IDs are short opaque strings on the wire (16-byte HKDF output from
-// ADR-0003, typically rendered as 32 hex chars or 22 base64url chars). The
-// Worker route accepts any non-empty string and uses it as the DO name. The
-// only validation the relay does is the schema check on the request body —
-// vault IDs themselves are not parsed at the relay (the unguessable HKDF
-// output is the auth signal, per ADR-0007 §1).
+// Vault IDs on the wire are the 22-char base64url encoding of a 16-byte HKDF
+// output (ADR-0003 §"vault id derivation"). Shape is enforced at the router
+// boundary by `validateVaultId` above — anything that doesn't match the
+// closed regex never reaches this helper. The unguessable HKDF output is the
+// auth signal per ADR-0007 §1; this stub-lookup trusts the caller to have
+// already validated the string.
 function getVaultStub(env: Env, vaultId: string) {
   const id = env.VAULT_RELAY.idFromName(vaultId);
   return env.VAULT_RELAY.get(id);
@@ -146,22 +162,22 @@ export function createApp(env: Env): Hono<{ Bindings: Env; Variables: Variables 
   // #32, observability hooks) can live in the Worker tier without touching
   // the DO.
   app.post("/v1/vault/:vaultId/events", (c) =>
-    forwardToDurableObject(c, c.req.param("vaultId"), "/events"),
+    forwardToDurableObject(c, validateVaultId(c.req.param("vaultId")), "/events"),
   );
   app.get("/v1/vault/:vaultId/events", (c) =>
-    forwardToDurableObject(c, c.req.param("vaultId"), "/events"),
+    forwardToDurableObject(c, validateVaultId(c.req.param("vaultId")), "/events"),
   );
 
   // Device-list endpoints (issue #27). Same forwarder pattern; the DO
   // dispatches on method + path. `:deviceId` is opaque to the Worker —
   // the DO's schema check validates the base64url shape.
   app.post("/v1/vault/:vaultId/devices", (c) =>
-    forwardToDurableObject(c, c.req.param("vaultId"), "/devices"),
+    forwardToDurableObject(c, validateVaultId(c.req.param("vaultId")), "/devices"),
   );
   app.delete("/v1/vault/:vaultId/devices/:deviceId", (c) =>
     forwardToDurableObject(
       c,
-      c.req.param("vaultId"),
+      validateVaultId(c.req.param("vaultId")),
       `/devices/${encodeURIComponent(c.req.param("deviceId"))}`,
     ),
   );
