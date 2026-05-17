@@ -9,3 +9,5 @@ Each device holds a full copy of the vault. A Cloudflare Worker + Durable Object
 - The relay's API surface is allowed to be Cloudflare-shaped. A future "portable relay" effort would require either re-specifying the protocol or implementing a Cloudflare-compatible adapter.
 - DO storage caps (10GB per DO) define the practical upper bound for a single vault. At ~500 bytes per event, this is effectively unlimited for a single user.
 - The "blind" promise is not a property of Cloudflare's trustworthiness — it's an architectural property of the protocol. The relay literally never receives anything but ciphertext + opaque IDs.
+
+See also: **ADR-0007** for the wire-level transport conventions (vault bootstrap, error envelope, CORS policy) that every relay endpoint inherits.

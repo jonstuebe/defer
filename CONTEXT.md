@@ -85,6 +85,14 @@ _Avoid_: linking, login, sign-in
 The transport/storage service that holds encrypted blobs and routes them between devices. Sees only opaque vault IDs and ciphertext — never URLs, titles, or content.
 _Avoid_: server, backend, cloud
 
+**Vault bootstrap**:
+The first authenticated `POST /v1/vault/:vaultId/events` from a previously-unseen `vaultId`. Initializes the per-vault Durable Object and registers the bearer token as the first **Device auth token** for that vault — "trust on first use," sound because the 16-byte `vaultId` is unguessable (HKDF-derived from the 32-byte vault key, ADR-0003). All other endpoints return `404 UNKNOWN_VAULT` against an uninitialized vault. Pinned by ADR-0007.
+_Avoid_: vault creation, signup, registration
+
+**Error envelope**:
+The single JSON shape every non-2xx relay response carries: `{ error, code, requestId }`. `error` is a short human-readable category, `code` is a machine-readable closed enum (shipped from `@defer/core`'s `relayProtocol` sub-module), `requestId` is a UUID v7 echoed in the `X-Request-Id` header for log cross-correlation. Pinned by ADR-0007.
+_Avoid_: error response, error body, fault
+
 ## Relationships
 
 - A **Vault** contains zero or more **Items**, derived by replaying its **Events**

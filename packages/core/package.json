@@ -21,6 +21,10 @@
     "./pending-event-queue": {
       "types": "./src/pending-event-queue/index.ts",
       "default": "./src/pending-event-queue/index.ts"
+    },
+    "./relay-protocol": {
+      "types": "./src/relay-protocol/index.ts",
+      "default": "./src/relay-protocol/index.ts"
     }
   },
   "scripts": {
