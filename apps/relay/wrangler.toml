@@ -1,0 +1,38 @@
+name = "defer-relay"
+main = "src/index.ts"
+compatibility_date = "2026-05-16"
+# `nodejs_compat` is required by @cloudflare/vitest-pool-workers — the test
+# harness loads chunks of the vitest runtime that rely on `node:*` shims.
+# Production handler code MUST NOT import Node built-ins; the flag is only
+# here so the test pool can boot. See ADR-0001 (blind-relay invariant) and
+# ADR-0007 §3 (CORS policy).
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Comma-separated exact-match origins added to the compiled-in default allowlist
+# (chrome-extension://*, safari-web-extension://*, tauri://*). See ADR-0007 §3.
+CORS_ALLOWED_ORIGINS = ""
+
+# Replace this with `wrangler secret put LOG_HMAC_SECRET` in production. The
+# placeholder is here so wrangler dev / Miniflare have a value at hand; the
+# secret rotates without churning the codebase.
+LOG_HMAC_SECRET = "PLACEHOLDER_DEV_SECRET_REPLACE_VIA_WRANGLER_SECRET_PUT"
+
+[[durable_objects.bindings]]
+name = "VAULT_RELAY"
+class_name = "VaultRelay"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["VaultRelay"]
+
+# Pairing-token KV namespace. Replace `id` / `preview_id` with the actual
+# namespace IDs from `wrangler kv:namespace create PAIRING_TOKENS` (and
+# `--preview`) before the first deploy. See README.md.
+[[kv_namespaces]]
+binding = "PAIRING_TOKENS"
+id = "PLACEHOLDER_PRODUCTION_ID"
+preview_id = "PLACEHOLDER_PREVIEW_ID"
+
+[observability]
+enabled = true
