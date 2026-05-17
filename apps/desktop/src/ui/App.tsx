@@ -22,7 +22,7 @@ import { Welcome } from "./Welcome.js";
 import { MnemonicDisplay } from "./MnemonicDisplay.js";
 import { MnemonicVerification } from "./MnemonicVerification.js";
 import { EmptyInbox } from "./EmptyInbox.js";
-import { Inbox } from "./Inbox.js";
+import { MainView } from "./MainView.js";
 
 type Screen =
   | { name: "loading" }
@@ -124,7 +124,7 @@ export function App({ storage }: AppProps) {
     return <div className="screen">Loading…</div>;
   }
   return (
-    <Inbox
+    <MainView
       projection={services.projection}
       commands={services.commands}
       onRefresh={() => services.inbound.triggerNow()}

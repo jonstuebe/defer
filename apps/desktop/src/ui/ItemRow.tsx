@@ -2,25 +2,44 @@ import type { Item } from "@defer/core";
 
 type ItemRowProps = {
   item: Item;
+  selected: boolean;
   onOpen: () => void;
+  onToggleDetails: () => void;
 };
 
-export function ItemRow({ item, onOpen }: ItemRowProps) {
+export function ItemRow({ item, selected, onOpen, onToggleDetails }: ItemRowProps) {
   const host = safeHostname(item.url);
   return (
-    <li
-      className="item-row"
-      onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") onOpen();
-      }}
-      tabIndex={0}
-    >
-      <span className="title">{item.title || item.url}</span>
-      <div className="meta">
-        <span>{host}</span>
-        <span>{formatRelative(item.savedAt)}</span>
-      </div>
+    <li className={`item-row with-button ${selected ? "selected" : ""}`}>
+      <button
+        type="button"
+        className="row-body"
+        onClick={onOpen}
+        aria-label={`Open ${item.title || item.url} in browser`}
+        style={{
+          background: "transparent",
+          border: 0,
+          color: "inherit",
+          padding: 0,
+          textAlign: "left",
+          cursor: "pointer",
+        }}
+      >
+        <span className="title">{item.title || item.url}</span>
+        <div className="meta">
+          <span>{host}</span>
+          <span>{formatRelative(item.savedAt)}</span>
+        </div>
+      </button>
+      <button
+        type="button"
+        className="details-btn"
+        onClick={onToggleDetails}
+        aria-label={`Toggle details for ${item.title || item.url}`}
+        aria-pressed={selected}
+      >
+        Details
+      </button>
     </li>
   );
 }
