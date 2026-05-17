@@ -34,5 +34,15 @@ binding = "PAIRING_TOKENS"
 id = "PLACEHOLDER_PRODUCTION_ID"
 preview_id = "PLACEHOLDER_PREVIEW_ID"
 
+# Pairing-endpoint global rate limit (issue #32). Keyed by cf-connecting-ip;
+# 60 requests / 60s per IP. Applies only to `/v1/pairing/*` (the per-vault
+# routes have their own DO-side buckets). `namespace_id` is opaque to the
+# runtime — Cloudflare just needs a stable integer per binding.
+[[unsafe.bindings]]
+name = "PAIRING_RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 60, period = 60 }
+
 [observability]
 enabled = true
