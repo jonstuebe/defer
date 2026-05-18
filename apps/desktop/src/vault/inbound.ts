@@ -5,6 +5,7 @@ import type { Event } from "@defer/core";
 import type { StoragePort } from "../storage/index.js";
 import type { VaultProjectionStore } from "./projection-store.js";
 import type { SearchStore } from "./search-store.js";
+import { executeVaultWipe, shouldRouteThroughWipe } from "./vault-wipe-executor.js";
 
 export const SETTING_INBOUND_CURSOR = "sync.inboundCursor";
 
@@ -36,8 +37,21 @@ export function makeInboundReplay(deps: {
   storage: StoragePort;
   projection: VaultProjectionStore;
   searchStore?: SearchStore;
+  /**
+   * Fires after a `VaultDeleted` event triggers a wipe. Hosts use this
+   * to navigate back to the welcome screen and stop the inbound
+   * scheduler (PRD US #14).
+   */
+  onVaultWiped?: (deletedAt: number) => void;
+  /**
+   * Fires when a `VaultDeleted` event is REFUSED — invalid signature
+   * or wrong-device-id. The reducer skips the event; the host surfaces
+   * a diagnostic so the user knows a hostile event was rejected
+   * (PRD US #15).
+   */
+  onVaultWipeRefused?: (reason: "invalid-signature" | "wrong-device-id") => void;
 }): InboundReplay {
-  const { client, storage, projection, searchStore } = deps;
+  const { client, storage, projection, searchStore, onVaultWiped, onVaultWipeRefused } = deps;
   return new InboundReplay({
     client,
     async readCursor() {
@@ -50,6 +64,27 @@ export function makeInboundReplay(deps: {
       await storage.setSetting(SETTING_INBOUND_CURSOR, String(since));
     },
     async onEvent(event: Event) {
+      // `VaultDeleted` routes through the wipe coordinator BEFORE
+      // touching the projection — once the signature is verified and
+      // local state is destroyed, applying it through the reducer is
+      // moot.
+      if (shouldRouteThroughWipe(event)) {
+        const outcome = await executeVaultWipe(storage, event);
+        if (outcome.kind === "wiped") {
+          // Persist the event row last so the cursor can still advance
+          // past this seq — otherwise the next pull would re-fetch it
+          // and refuse-as-invalid (no vault key remaining to verify).
+          // For the wiped case we instead let the projection see it so
+          // its `isDeleted` flag flips and the UI knows.
+          projection.apply(event);
+          searchStore?.apply(event);
+          onVaultWiped?.(outcome.deletedAt);
+          return;
+        }
+        onVaultWipeRefused?.(outcome.reason);
+        return;
+      }
+
       await storage.appendEvent({
         seq: event.seq,
         type: event.type,
