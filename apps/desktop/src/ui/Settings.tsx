@@ -12,6 +12,7 @@ type SettingsProps = {
   storage: StoragePort;
   currentDeviceId: string;
   onClose: () => void;
+  onPairNewDevice: () => void;
 };
 
 /**
@@ -32,6 +33,7 @@ export function Settings({
   storage,
   currentDeviceId,
   onClose,
+  onPairNewDevice,
 }: SettingsProps) {
   const devices = useProjectionDevices(projection);
   const [relayBaseUrl, setRelayBaseUrlState] = useState<string | null>(null);
@@ -75,7 +77,12 @@ export function Settings({
       </div>
 
       <section className="card col">
-        <h2 style={{ marginTop: 0 }}>Vault</h2>
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <h2 style={{ marginTop: 0 }}>Vault</h2>
+          <button className="secondary" onClick={onPairNewDevice}>
+            Pair a new device
+          </button>
+        </div>
         <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
           Devices that have access to this vault.
         </p>
