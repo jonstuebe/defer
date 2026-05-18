@@ -26,6 +26,7 @@ import { MnemonicVerification } from "./MnemonicVerification.js";
 import { EmptyInbox } from "./EmptyInbox.js";
 import { MainView } from "./MainView.js";
 import { RestoreFlow } from "./RestoreFlow.js";
+import { Settings } from "./Settings.js";
 import { restoreFromMnemonic } from "../onboarding/restore-vault.js";
 
 type Screen =
@@ -35,7 +36,8 @@ type Screen =
   | { name: "create-mnemonic-verification"; vault: CreatedVault }
   | { name: "restore" }
   | { name: "empty-inbox" }
-  | { name: "inbox" };
+  | { name: "inbox" }
+  | { name: "settings" };
 
 type AppProps = {
   storage: StoragePort;
@@ -150,6 +152,18 @@ export function App({ storage }: AppProps) {
   if (services === null) {
     return <div className="screen">Loading…</div>;
   }
+  if (screen.name === "settings") {
+    const loaded = services;
+    return (
+      <Settings
+        projection={loaded.projection}
+        commands={loaded.commands}
+        storage={storage}
+        currentDeviceId={loaded.commands.getDeviceId()}
+        onClose={() => setScreen({ name: "inbox" })}
+      />
+    );
+  }
   return (
     <MainView
       projection={services.projection}
@@ -157,6 +171,7 @@ export function App({ storage }: AppProps) {
       lastOpened={services.lastOpened}
       search={services.search}
       onRefresh={() => services.inbound.triggerNow()}
+      onOpenSettings={() => setScreen({ name: "settings" })}
     />
   );
 }

@@ -190,6 +190,25 @@ input[type="url"] {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+.device-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+}
+
+.device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  gap: 16px;
+}
+
+.device-row:last-child {
+  border-bottom: 0;
+}
+
 .empty-inbox-hint {
   padding: 20px;
   border: 1px dashed var(--border);

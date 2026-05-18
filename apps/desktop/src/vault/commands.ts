@@ -56,6 +56,10 @@ export class VaultCommands {
     this.#deps = deps;
   }
 
+  getDeviceId(): string {
+    return this.#deps.deviceId;
+  }
+
   async save(rawUrl: string, opts: { title?: string; savedAt?: number } = {}): Promise<void> {
     const canonicalUrl = canonicalize(rawUrl);
     const timestamp = this.#deps.now();
@@ -172,6 +176,26 @@ export class VaultCommands {
         data: { itemId, tag },
       },
       [itemId],
+    );
+  }
+
+  /**
+   * Emits a `DeviceRevoked` event for a non-current device. The relay-side
+   * DELETE on `/v1/vault/:vaultId/devices/:deviceId` is the caller's
+   * responsibility (it requires the current device's bearer auth, which
+   * doesn't live here in `vaultCommands`). Per ADR-0003 §"revocation"
+   * the event is the durable signal; the DELETE is the on-wire enforcement.
+   */
+  async revokeDevice(deviceId: string): Promise<void> {
+    await this.#emit(
+      {
+        type: "DeviceRevoked",
+        deviceId: this.#deps.deviceId,
+        timestamp: this.#deps.now(),
+        clientNonce: randomClientNonceBase64Url(),
+        data: { deviceId },
+      },
+      [],
     );
   }
 
