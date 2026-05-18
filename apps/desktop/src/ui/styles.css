@@ -270,6 +270,21 @@ input[type="url"] {
   background: var(--card);
 }
 
+.item-row.focused {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+.item-row.opened .title,
+.item-row.opened .meta {
+  color: var(--muted);
+}
+
+.item-row.opened .title {
+  font-weight: normal;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 220px 1fr 360px;

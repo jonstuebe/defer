@@ -155,6 +155,24 @@ export class SqliteStorage implements StoragePort {
     );
   }
 
+  async markItemOpened(itemId: string, openedAt: number): Promise<void> {
+    this.#db.run(
+      `INSERT INTO device_local_last_opened(item_id, opened_at) VALUES(?, ?)
+       ON CONFLICT(item_id) DO UPDATE SET opened_at = excluded.opened_at;`,
+      [itemId, openedAt],
+    );
+  }
+
+  async getLastOpenedTimestamps(): Promise<ReadonlyMap<string, number>> {
+    const result = this.#db.exec(`SELECT item_id, opened_at FROM device_local_last_opened;`);
+    const map = new Map<string, number>();
+    if (result.length === 0) return map;
+    for (const row of result[0]?.values ?? []) {
+      map.set(row[0] as string, row[1] as number);
+    }
+    return map;
+  }
+
   exportBytes(): Uint8Array {
     return this.#db.export();
   }
