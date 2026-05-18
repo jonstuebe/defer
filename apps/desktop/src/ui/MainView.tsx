@@ -26,7 +26,8 @@ type MainViewProps = {
  */
 export function MainView({ projection, commands, onRefresh }: MainViewProps) {
   const allItems = useProjectionItems(projection);
-  const [filter, setFilter] = useState<SidebarFilter>("inbox");
+  const allTags = useProjectionTags(projection);
+  const [filter, setFilter] = useState<SidebarFilter>({ kind: "inbox" });
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
   const filtered = useMemo(() => filterItems(allItems, filter), [allItems, filter]);
@@ -54,6 +55,7 @@ export function MainView({ projection, commands, onRefresh }: MainViewProps) {
     <div className={`layout ${detailOpen ? "" : "detail-closed"}`}>
       <Sidebar
         selected={filter}
+        tags={allTags}
         onSelect={(next) => {
           setFilter(next);
           // Selection in another view is stale — close the detail pane so
@@ -76,7 +78,7 @@ export function MainView({ projection, commands, onRefresh }: MainViewProps) {
         <SaveBar onSave={handleSave} />
         {filtered.length === 0 ? (
           <div className="layout-list-empty">
-            {filter === "inbox"
+            {filter.kind === "inbox"
               ? "Save a link from the Chrome extension, or paste a URL above."
               : `Nothing in ${titleForFilter(filter)} yet.`}
           </div>
@@ -94,19 +96,26 @@ export function MainView({ projection, commands, onRefresh }: MainViewProps) {
           </ul>
         )}
       </main>
-      <DetailPane key={selectedItem?.id ?? "none"} item={selectedItem} commands={commands} />
+      <DetailPane
+        key={selectedItem?.id ?? "none"}
+        item={selectedItem}
+        allTags={allTags}
+        commands={commands}
+      />
     </div>
   );
 }
 
 function titleForFilter(filter: SidebarFilter): string {
-  switch (filter) {
+  switch (filter.kind) {
     case "inbox":
       return "Inbox";
     case "archive":
       return "Archive";
     case "liked":
       return "Liked";
+    case "tag":
+      return `#${filter.tag}`;
   }
 }
 
@@ -116,4 +125,26 @@ function useProjectionItems(projection: VaultProjectionStore): readonly Item[] {
     () => projection.getItemsSortedBySavedAtDesc(),
     () => projection.getItemsSortedBySavedAtDesc(),
   );
+}
+
+function useProjectionTags(projection: VaultProjectionStore): readonly string[] {
+  return useSyncExternalStore(
+    (listener) => projection.subscribe(listener),
+    () => getSortedTagsFromProjection(projection),
+    () => getSortedTagsFromProjection(projection),
+  );
+}
+
+// Memoized accessor — `useSyncExternalStore`'s `getSnapshot` requires a
+// stable reference for identical state. We compute once per projection
+// state revision and cache the result, keyed by the underlying tags set.
+const TAGS_CACHE = new WeakMap<ReadonlySet<string>, readonly string[]>();
+
+function getSortedTagsFromProjection(projection: VaultProjectionStore): readonly string[] {
+  const set = projection.getState().tags;
+  const cached = TAGS_CACHE.get(set);
+  if (cached !== undefined) return cached;
+  const sorted = [...set].sort((a, b) => a.localeCompare(b));
+  TAGS_CACHE.set(set, sorted);
+  return sorted;
 }

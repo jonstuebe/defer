@@ -29,6 +29,18 @@ export function ItemRow({ item, selected, onOpen, onToggleDetails }: ItemRowProp
         <div className="meta">
           <span>{host}</span>
           <span>{formatRelative(item.savedAt)}</span>
+          {item.tags.length > 0 ? (
+            <span className="tag-chips" aria-label="Tags">
+              {item.tags.slice(0, 3).map((tag) => (
+                <span key={tag} className="tag-chip">
+                  {tag}
+                </span>
+              ))}
+              {item.tags.length > 3 ? (
+                <span className="tag-chip">+{item.tags.length - 3} more</span>
+              ) : null}
+            </span>
+          ) : null}
         </div>
       </button>
       <button
