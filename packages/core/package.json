@@ -25,6 +25,14 @@
     "./relay-protocol": {
       "types": "./src/relay-protocol/index.ts",
       "default": "./src/relay-protocol/index.ts"
+    },
+    "./relay-client": {
+      "types": "./src/relay-client/index.ts",
+      "default": "./src/relay-client/index.ts"
+    },
+    "./outbound-flush": {
+      "types": "./src/outbound-flush/index.ts",
+      "default": "./src/outbound-flush/index.ts"
     }
   },
   "scripts": {

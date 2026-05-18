@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { PendingEventQueue } from "@defer/core/pending-event-queue";
+import { RelayClient, RelayError } from "@defer/core/relay-client";
+import { OutboundFlush } from "@defer/core/outbound-flush";
 
 import type { StoragePort } from "../storage/index.js";
 import { VaultProjectionStore } from "../vault/projection-store.js";
 import { VaultCommands } from "../vault/commands.js";
 import { SqlitePendingQueueStorage } from "../vault/pending-queue-adapter.js";
+import { decodePendingEvent } from "../vault/wire-codec.js";
+import { ensureDeviceAuthToken, getRelayBaseUrl } from "../vault/relay-config.js";
 import {
   createVault,
   persistVault,
@@ -113,13 +117,48 @@ async function buildServices(
 ): Promise<{ projection: VaultProjectionStore; commands: VaultCommands }> {
   const projection = new VaultProjectionStore(storage);
   await projection.hydrate();
+
   const pendingQueue = new PendingEventQueue(new SqlitePendingQueueStorage(storage));
+
+  const loaded = await loadVault(storage);
+  const vaultIdBase64Url = loaded?.vaultIdBase64Url ?? "";
+  const bearerToken = await ensureDeviceAuthToken(storage);
+  const baseUrl = await getRelayBaseUrl(storage);
+
+  const client = new RelayClient({ baseUrl, vaultIdBase64Url, bearerToken });
+  const flush = new OutboundFlush({
+    queue: pendingQueue,
+    client,
+    decode: decodePendingEvent,
+    async onSeqAssigned(assignments) {
+      for (const a of assignments) {
+        await storage.stampEventSeq(a.deviceId, a.clientNonce, a.seq);
+      }
+    },
+  });
+
   const commands = new VaultCommands({
     storage,
     projection,
     pendingQueue,
     deviceId,
     now: Date.now,
+    onPersisted: () => {
+      // Fire-and-forget: kick a flush but surface relay errors to the
+      // console (no toast wiring in this slice yet — landing in the
+      // settings/error-surface slice). The queue retains failed events
+      // for retry on the next save or app open.
+      void flush.flush().catch((err: unknown) => {
+        if (err instanceof RelayError) {
+          // eslint-disable-next-line no-console
+          console.warn("[relay]", err.code, err.requestId, err.envelope.error);
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn("[relay] transport error", err);
+        }
+      });
+    },
   });
+
   return { projection, commands };
 }
