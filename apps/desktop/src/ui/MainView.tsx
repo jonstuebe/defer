@@ -94,7 +94,7 @@ export function MainView({ projection, commands, onRefresh }: MainViewProps) {
           </ul>
         )}
       </main>
-      <DetailPane item={selectedItem} />
+      <DetailPane key={selectedItem?.id ?? "none"} item={selectedItem} commands={commands} />
     </div>
   );
 }
