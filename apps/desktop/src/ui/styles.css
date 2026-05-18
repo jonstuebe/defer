@@ -141,6 +141,55 @@ input[type="url"] {
   text-align: right;
 }
 
+.restore-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px 16px;
+  margin: 16px 0;
+}
+
+.restore-word {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.restore-word .position {
+  color: var(--muted);
+  width: 24px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.restore-word-input {
+  flex: 1;
+  position: relative;
+}
+
+.restore-word-input input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
+.restore-suggestions {
+  display: flex;
+  gap: 2px;
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+
+.restore-suggestion {
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 10px;
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .empty-inbox-hint {
   padding: 20px;
   border: 1px dashed var(--border);

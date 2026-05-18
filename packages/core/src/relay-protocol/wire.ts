@@ -242,3 +242,68 @@ export const CancelDeletionResponseSchema = z.object({
   assignedSeq: z.number().int().positive(),
 });
 export type CancelDeletionResponse = z.infer<typeof CancelDeletionResponseSchema>;
+
+// --- Vault restoration handshake (ADR-0008) ------------------------------
+//
+// A restoring device — holding only the user's typed recovery mnemonic —
+// proves vault-key ownership through a two-step challenge/response so it
+// can join an already-initialized vault's device list. ADR-0008 covers
+// the rationale + threat model; this section is the wire contract.
+//
+// Both endpoints are unauthenticated (the MAC keyed by the vault key is
+// the auth signal). The relay cannot verify the MAC — it has no vault
+// key — and forwards the MAC into the emitted `DeviceRegistered` event
+// for client-side verification on replay.
+
+/** 43-char base64url — 32 random bytes encoded without padding. */
+const RECOVERY_NONCE_REGEX = /^[A-Za-z0-9_-]{43}$/;
+/** 43-char base64url — 32-byte HMAC-SHA256 output. */
+const RECOVERY_MAC_REGEX = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * Response shape for `GET /v1/vault/:vaultId/recovery-challenge`. The
+ * relay generates a fresh 32-byte server nonce, stores it in the DO
+ * keyed by `(vaultId, challengeNonce)` with a 60-second TTL, and
+ * returns the encoded value plus an absolute expiry. The TTL matches
+ * the pairing-token TTL pinned by ADR-0003.
+ */
+export const RecoveryChallengeResponseSchema = z
+  .object({
+    challengeNonce: z.string().regex(RECOVERY_NONCE_REGEX),
+    expiresAt: z.number().int().positive(),
+  })
+  .strict();
+export type RecoveryChallengeResponse = z.infer<typeof RecoveryChallengeResponseSchema>;
+
+/**
+ * Body shape for `POST /v1/vault/:vaultId/recovery-claim`. Carries the
+ * device's new `deviceId` + new `deviceAuthToken` + an HMAC-SHA256 over
+ * canonical bytes (per ADR-0008 §"Canonical bytes") keyed by the vault
+ * key. The relay consumes the `challengeNonce` on attempt (one-shot),
+ * registers the device, and emits a `DeviceRegistered` event whose
+ * `recoveryClaim.mac` carries this MAC for replay-side verification.
+ */
+export const RecoveryClaimRequestSchema = z
+  .object({
+    challengeNonce: z.string().regex(RECOVERY_NONCE_REGEX),
+    deviceId: z.string().regex(DEVICE_ID_REGEX),
+    deviceAuthToken: z.string().regex(DEVICE_ID_REGEX),
+    mac: z.string().regex(RECOVERY_MAC_REGEX),
+  })
+  .strict();
+export type RecoveryClaimRequest = z.infer<typeof RecoveryClaimRequestSchema>;
+
+/**
+ * Response shape for `POST /v1/vault/:vaultId/recovery-claim`. Echoes
+ * the `assignedSeq` of the emitted `DeviceRegistered` event so the
+ * restoring client can start its inbound replay from `seq > assignedSeq`
+ * if it wants to skip its own self-registration on the immediate next
+ * pull (otherwise the reducer's idempotency absorbs it harmlessly).
+ */
+export const RecoveryClaimResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    assignedSeq: z.number().int().positive(),
+  })
+  .strict();
+export type RecoveryClaimResponse = z.infer<typeof RecoveryClaimResponseSchema>;

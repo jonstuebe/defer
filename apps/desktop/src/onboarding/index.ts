@@ -12,3 +12,10 @@ export {
   type MnemonicChallenge,
   type MnemonicVerificationResult,
 } from "./verify-mnemonic.js";
+export {
+  restoreFromMnemonic,
+  type RestorationStep,
+  type RestoreFromMnemonicDeps,
+  type RecoveryClaim,
+} from "./restore-vault.js";
+export { BIP39_WORDLIST, isBip39Word, suggestBip39Words } from "./bip39-wordlist.js";
