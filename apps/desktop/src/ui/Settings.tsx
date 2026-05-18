@@ -14,6 +14,7 @@ type SettingsProps = {
   onClose: () => void;
   onPairNewDevice: () => void;
   onSignOutThisDevice: () => void;
+  onScheduleDeletion: () => void;
 };
 
 /**
@@ -36,6 +37,7 @@ export function Settings({
   onClose,
   onPairNewDevice,
   onSignOutThisDevice,
+  onScheduleDeletion,
 }: SettingsProps) {
   const devices = useProjectionDevices(projection);
   const [relayBaseUrl, setRelayBaseUrlState] = useState<string | null>(null);
@@ -123,6 +125,19 @@ export function Settings({
             })}
           </ul>
         )}
+      </section>
+
+      <section className="card col">
+        <h2 style={{ marginTop: 0, color: "var(--danger)" }}>Danger zone</h2>
+        <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+          Scheduling deletion starts a 48-hour grace window. Any paired device can cancel before the
+          window elapses.
+        </p>
+        <div className="row">
+          <button style={{ background: "var(--danger)" }} onClick={onScheduleDeletion}>
+            Schedule vault deletion
+          </button>
+        </div>
       </section>
 
       <section className="card col">

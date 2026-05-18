@@ -22,3 +22,4 @@ export {
   verifyRecoveryClaimMac,
   type RecoveryClaimMacInput,
 } from "./recovery-mac.js";
+export { canonicalizeForSigning, envelopeForSigning } from "./canonical-bytes.js";

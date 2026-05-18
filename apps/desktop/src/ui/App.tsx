@@ -29,8 +29,11 @@ import { RestoreFlow } from "./RestoreFlow.js";
 import { Settings } from "./Settings.js";
 import { PairDevice } from "./PairDevice.js";
 import { SignOutConfirm } from "./SignOutConfirm.js";
+import { ScheduleDeletion } from "./ScheduleDeletion.js";
+import { DeletionBanner } from "./DeletionBanner.js";
 import { executePairing } from "../vault/pairing-existing-device.js";
 import { signOutThisDevice } from "../vault/sign-out.js";
+import { scheduleVaultDeletion, cancelVaultDeletion } from "../vault/vault-deletion-scheduler.js";
 import { restoreFromMnemonic } from "../onboarding/restore-vault.js";
 
 type Screen =
@@ -43,7 +46,8 @@ type Screen =
   | { name: "inbox" }
   | { name: "settings" }
   | { name: "pair-device" }
-  | { name: "sign-out-confirm" };
+  | { name: "sign-out-confirm" }
+  | { name: "schedule-deletion" };
 
 type AppProps = {
   storage: StoragePort;
@@ -161,14 +165,35 @@ export function App({ storage }: AppProps) {
   if (screen.name === "settings") {
     const loaded = services;
     return (
-      <Settings
-        projection={loaded.projection}
-        commands={loaded.commands}
-        storage={storage}
-        currentDeviceId={loaded.commands.getDeviceId()}
-        onClose={() => setScreen({ name: "inbox" })}
-        onPairNewDevice={() => setScreen({ name: "pair-device" })}
-        onSignOutThisDevice={() => setScreen({ name: "sign-out-confirm" })}
+      <WithDeletionBanner services={loaded} storage={storage}>
+        <Settings
+          projection={loaded.projection}
+          commands={loaded.commands}
+          storage={storage}
+          currentDeviceId={loaded.commands.getDeviceId()}
+          onClose={() => setScreen({ name: "inbox" })}
+          onPairNewDevice={() => setScreen({ name: "pair-device" })}
+          onSignOutThisDevice={() => setScreen({ name: "sign-out-confirm" })}
+          onScheduleDeletion={() => setScreen({ name: "schedule-deletion" })}
+        />
+      </WithDeletionBanner>
+    );
+  }
+  if (screen.name === "schedule-deletion") {
+    const loaded = services;
+    return (
+      <ScheduleDeletion
+        onCancel={() => setScreen({ name: "settings" })}
+        onConfirm={async () => {
+          await scheduleVaultDeletion({
+            storage,
+            projection: loaded.projection,
+            pendingQueue: loaded.commands.getPendingQueue(),
+            deviceId: loaded.commands.getDeviceId(),
+            now: Date.now,
+          });
+          setScreen({ name: "settings" });
+        }}
       />
     );
   }
@@ -213,15 +238,73 @@ export function App({ storage }: AppProps) {
     );
   }
   return (
-    <MainView
-      projection={services.projection}
-      commands={services.commands}
-      lastOpened={services.lastOpened}
-      search={services.search}
-      onRefresh={() => services.inbound.triggerNow()}
-      onOpenSettings={() => setScreen({ name: "settings" })}
-    />
+    <WithDeletionBanner services={services} storage={storage}>
+      <MainView
+        projection={services.projection}
+        commands={services.commands}
+        lastOpened={services.lastOpened}
+        search={services.search}
+        onRefresh={() => services.inbound.triggerNow()}
+        onOpenSettings={() => setScreen({ name: "settings" })}
+      />
+    </WithDeletionBanner>
   );
+}
+
+type Services = NonNullable<ReturnType<typeof useServices>>;
+
+// Helper that subscribes to the projection's scheduledDeletion slot and
+// renders the persistent banner above whatever screen is below.
+function WithDeletionBanner({
+  services,
+  storage,
+  children,
+}: {
+  services: Services;
+  storage: StoragePort;
+  children: React.ReactNode;
+}) {
+  const scheduled = useScheduledDeletion(services.projection);
+  if (scheduled === null) return <>{children}</>;
+  return (
+    <>
+      <DeletionBanner
+        scheduledFor={scheduled.scheduledFor}
+        onCancel={async () => {
+          await cancelVaultDeletion({
+            storage,
+            projection: services.projection,
+            pendingQueue: services.commands.getPendingQueue(),
+            deviceId: services.commands.getDeviceId(),
+            now: Date.now,
+          });
+        }}
+      />
+      {children}
+    </>
+  );
+}
+
+function useScheduledDeletion(projection: VaultProjectionStore): { scheduledFor: number } | null {
+  const [snap, setSnap] = useState(() => projection.getState().scheduledDeletion);
+  useEffect(() => {
+    return projection.subscribe(() => {
+      setSnap(projection.getState().scheduledDeletion);
+    });
+  }, [projection]);
+  return snap ? { scheduledFor: snap.scheduledFor } : null;
+}
+
+// Placeholder so the WithDeletionBanner helper's `Services` type alias
+// resolves without manually re-typing the services object.
+function useServices() {
+  return null as null | {
+    projection: VaultProjectionStore;
+    commands: VaultCommands;
+    inbound: InboundScheduler;
+    lastOpened: LastOpenedStore;
+    search: SearchStore;
+  };
 }
 
 async function buildServices(
