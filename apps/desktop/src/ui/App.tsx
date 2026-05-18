@@ -9,6 +9,7 @@ import { VaultCommands } from "../vault/commands.js";
 import { SqlitePendingQueueStorage } from "../vault/pending-queue-adapter.js";
 import { decodePendingEvent } from "../vault/wire-codec.js";
 import { ensureDeviceAuthToken, getRelayBaseUrl } from "../vault/relay-config.js";
+import { InboundScheduler, makeInboundReplay } from "../vault/inbound.js";
 import {
   createVault,
   persistVault,
@@ -40,6 +41,7 @@ export function App({ storage }: AppProps) {
   const [services, setServices] = useState<{
     projection: VaultProjectionStore;
     commands: VaultCommands;
+    inbound: InboundScheduler;
   } | null>(null);
 
   useEffect(() => {
@@ -49,7 +51,11 @@ export function App({ storage }: AppProps) {
       if (cancelled) return;
       if (existing) {
         const services = await buildServices(storage, existing.deviceId);
-        if (cancelled) return;
+        if (cancelled) {
+          services.inbound.stop();
+          return;
+        }
+        services.inbound.start();
         setServices(services);
         setScreen({ name: "inbox" });
       } else {
@@ -60,6 +66,14 @@ export function App({ storage }: AppProps) {
       cancelled = true;
     };
   }, [storage]);
+
+  // Stop the inbound scheduler when the component unmounts so timers don't
+  // leak in tests or when the user navigates between vaults.
+  useEffect(() => {
+    return () => {
+      services?.inbound.stop();
+    };
+  }, [services]);
 
   if (screen.name === "loading") {
     return <div className="screen">Loading…</div>;
@@ -96,6 +110,7 @@ export function App({ storage }: AppProps) {
           const deviceName = defaultDeviceName();
           await persistVault(storage, screen.vault, deviceName);
           const built = await buildServices(storage, screen.vault.deviceId);
+          built.inbound.start();
           setServices(built);
           setScreen({ name: "empty-inbox" });
         }}
@@ -108,13 +123,23 @@ export function App({ storage }: AppProps) {
   if (services === null) {
     return <div className="screen">Loading…</div>;
   }
-  return <Inbox projection={services.projection} commands={services.commands} />;
+  return (
+    <Inbox
+      projection={services.projection}
+      commands={services.commands}
+      onRefresh={() => services.inbound.triggerNow()}
+    />
+  );
 }
 
 async function buildServices(
   storage: StoragePort,
   deviceId: string,
-): Promise<{ projection: VaultProjectionStore; commands: VaultCommands }> {
+): Promise<{
+  projection: VaultProjectionStore;
+  commands: VaultCommands;
+  inbound: InboundScheduler;
+}> {
   const projection = new VaultProjectionStore(storage);
   await projection.hydrate();
 
@@ -160,5 +185,8 @@ async function buildServices(
     },
   });
 
-  return { projection, commands };
+  const inboundReplay = makeInboundReplay({ client, storage, projection });
+  const inbound = new InboundScheduler(inboundReplay);
+
+  return { projection, commands, inbound };
 }
