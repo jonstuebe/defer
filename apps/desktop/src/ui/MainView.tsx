@@ -3,6 +3,7 @@ import type { Item } from "@defer/core";
 
 import type { VaultProjectionStore } from "../vault/projection-store.js";
 import type { VaultCommands } from "../vault/commands.js";
+import type { SearchStore } from "../vault/search-store.js";
 import type { LastOpenedStore } from "../runtime/last-opened-store.js";
 import { openExternalUrl } from "../runtime/url-opener.js";
 
@@ -16,6 +17,7 @@ import { useKeyboardShortcuts } from "./use-keyboard-shortcuts.js";
 type MainViewProps = {
   projection: VaultProjectionStore;
   commands: VaultCommands;
+  search: SearchStore;
   lastOpened: LastOpenedStore;
   onRefresh: () => void;
 };
@@ -26,17 +28,31 @@ type MainViewProps = {
  * management). Slice #51 adds keyboard navigation and the device-local
  * "I opened this URL" dim signal.
  */
-export function MainView({ projection, commands, lastOpened, onRefresh }: MainViewProps) {
+export function MainView({ projection, commands, search, lastOpened, onRefresh }: MainViewProps) {
   const allItems = useProjectionItems(projection);
   const allTags = useProjectionTags(projection);
   const lastOpenedMap = useLastOpenedSnapshot(lastOpened);
+  const searchRevision = useSearchRevision(search);
   const [filter, setFilter] = useState<SidebarFilter>({ kind: "inbox" });
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [focusedIndex, setFocusedIndex] = useState<number>(0);
-  // Future slice #52 hooks this ref to focus the search input on ⌘F.
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
-  const filtered = useMemo(() => filterItems(allItems, filter), [allItems, filter]);
+  const stateFiltered = useMemo(() => filterItems(allItems, filter), [allItems, filter]);
+
+  const filtered = useMemo(() => {
+    const trimmedQuery = searchQuery.trim();
+    if (trimmedQuery === "") return stateFiltered;
+    const hits = search.getIndex().search(trimmedQuery);
+    const hitIds = new Set(hits.map((h: { itemId: string }) => h.itemId));
+    // Preserve sidebar filter while applying the search overlay so
+    // "Archive + rust" returns archived items matching "rust".
+    return stateFiltered.filter((item) => hitIds.has(item.id));
+    // searchRevision is the explicit dependency telling React the
+    // index mutated.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stateFiltered, searchQuery, search, searchRevision]);
   const selectedItem = useMemo(
     () =>
       selectedItemId === null ? null : (allItems.find((i) => i.id === selectedItemId) ?? null),
@@ -112,6 +128,24 @@ export function MainView({ projection, commands, lastOpened, onRefresh }: MainVi
           </button>
         </header>
         <SaveBar onSave={handleSave} />
+        <input
+          ref={searchInputRef}
+          type="text"
+          placeholder="Search title or URL — ⌘F"
+          value={searchQuery}
+          onChange={(e) => {
+            setSearchQuery(e.target.value);
+            setFocusedIndex(0);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setSearchQuery("");
+              e.currentTarget.blur();
+            }
+          }}
+          style={{ marginBottom: 12 }}
+          aria-label="Search items"
+        />
         {filtered.length === 0 ? (
           <div className="layout-list-empty">
             {filter.kind === "inbox"
@@ -189,5 +223,18 @@ function useLastOpenedSnapshot(store: LastOpenedStore): ReadonlyMap<string, numb
     (listener) => store.subscribe(listener),
     () => store.getSnapshot(),
     () => store.getSnapshot(),
+  );
+}
+
+/**
+ * `SearchIndex` mutates in place, so React can't compare snapshots.
+ * Returns a monotonic counter from the store — passing it as a `useMemo`
+ * dependency forces the consumer to re-query when the index changes.
+ */
+function useSearchRevision(store: SearchStore): number {
+  return useSyncExternalStore(
+    (listener) => store.subscribe(listener),
+    () => store.getRevision(),
+    () => store.getRevision(),
   );
 }

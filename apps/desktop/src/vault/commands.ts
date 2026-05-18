@@ -9,6 +9,7 @@ import { PendingEventQueue } from "@defer/core/pending-event-queue";
 
 import type { StoragePort } from "../storage/index.js";
 import type { VaultProjectionStore } from "./projection-store.js";
+import type { SearchStore } from "./search-store.js";
 import { randomClientNonceBase64Url } from "../util/base64.js";
 import { generateItemId } from "../util/random-item-id.js";
 import { encodePendingEvent } from "./wire-codec.js";
@@ -19,6 +20,12 @@ export type VaultCommandsDeps = {
   pendingQueue: PendingEventQueue;
   deviceId: string;
   now: () => number;
+  /**
+   * Optional search index updated alongside the projection. When set,
+   * locally-emitted events feed both stores so the search bar reflects
+   * an item the user just saved without waiting for a hydrate.
+   */
+  searchStore?: SearchStore;
   /**
    * Fire-and-forget trigger invoked after each command so events flush in
    * the background. The desktop wires this to `OutboundFlush.flush()`. The
@@ -200,6 +207,7 @@ export class VaultCommands {
     // seq is stamped by `outboundFlush`'s onSeqAssigned (slice #46).
     const localEvent = { ...pendingEvent, seq: 0 } as Event;
     this.#deps.projection.apply(localEvent);
+    this.#deps.searchStore?.apply(localEvent);
 
     await this.#deps.storage.appendEvent({
       seq: null,
